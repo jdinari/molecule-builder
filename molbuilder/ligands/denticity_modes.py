@@ -47,7 +47,7 @@ class VariableDenticitySMARTS:
     # Define standard donor atom patterns
     DONOR_PATTERNS = {
         # Single O donors (monodentate or bidentate)
-        "O_mono": "[O;X2,X1]"  # Oxygen with 1-2 connections
+        "O_mono": "[O;X2,X1]",  # Oxygen with 1-2 connections
         # Two O donors (bidentate chelation like acac, ox)
         "O2_chelate": "[O;X2].[O;X2]",
         # Single N donor
