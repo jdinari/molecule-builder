@@ -1,5 +1,5 @@
 """
-library_extended.py
+library.py
 ====================
 Extended ligand library including:
 - Formate (HCOO-) and formic acid (HCOOH)
