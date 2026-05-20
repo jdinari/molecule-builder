@@ -167,6 +167,8 @@ def main_extended():
     parser.add_argument("--ligands", nargs="*", help="Ligand names")
     parser.add_argument("--geometry", type=str, help="Coordination geometry")
     parser.add_argument("--out", type=str, required=True, help="Output POSCAR file")
+    parser.add_argument("--print", action="store_true", dest="print_poscar",
+                        help="Print POSCAR to stdout")
     parser.add_argument("--dimer", action="store_true", help="Build dimer")
     parser.add_argument("--n-metals", type=int, default=1, help="Number of metal centers")
     
@@ -228,7 +230,12 @@ def main_extended():
         # Write output
         output_path = Path(args.out)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(poscar_to_string(mol))
+        poscar_str = poscar_to_string(mol)
+
+        if args.print_poscar:
+            print(poscar_str)
+
+        output_path.write_text(poscar_str)
         print(f"✓ Complex written to {output_path}")
         
     except Exception as e:
