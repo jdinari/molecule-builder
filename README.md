@@ -2,7 +2,12 @@
 
 **Gas-phase transition metal complex builder → POSCAR (VASP)**
 
-Build mononuclear and polynuclear transition metal complexes from a simple Python API or CLI, with automatic bond lengths, full 3D ligand geometry (including H atoms), coordination geometries, isomer enumeration, and VASP-ready POSCAR output.
+Build mononuclear and polynuclear transition metal complexes with automatic bond lengths,
+full 3D ligand geometry (H atoms included), and VASP-ready POSCAR output.
+
+Isomers are **always generated automatically** — when a ligand set has multiple
+symmetry-distinct arrangements, `build()` returns a list of Molecules (one per isomer)
+and the CLI writes one POSCAR per isomer. No extra flags needed.
 
 ---
 
@@ -10,113 +15,113 @@ Build mononuclear and polynuclear transition metal complexes from a simple Pytho
 
 ```bash
 pip install rdkit numpy scipy
-# Then drop the molbuilder/ directory into your project
+# then add the molbuilder/ directory to your project
 ```
-
-Dependencies: `rdkit`, `numpy`, `scipy`
 
 ---
 
 ## Python API
 
 ```python
-from molbuilder.api import build, build_all_isomers, dimer, trimer, poscar, xyz, info
+from molbuilder.api import build, dimer, trimer, poscar, xyz, info, load_ligand_from_poscar
 ```
 
-### Mononuclear complexes
+### `build()` — automatic isomers
+
+`build()` returns a **single `Molecule`** when there is only one isomer,
+or a **list of `Molecule` objects** when multiple exist.
+Each molecule has a `.label` attribute (`"fac"`, `"mer"`, `"cis"`, `"trans"`, …).
 
 ```python
-# Octahedral Fe(III): [FeCl3(H2O)3]  — includes H atoms on water
-mol = build("Fe", ox=3, ligands=["Cl","Cl","Cl","H2O","H2O","H2O"])
-poscar(mol, "FeCl3_H2O3.POSCAR")
+# One isomer → Molecule
+mol = build("Ni", ox=2, ligands=["H2O"]*6)
+poscar(mol, "Ni_H2O6.POSCAR")
 
-# Square planar Pd(II): [Pd(bpy)Cl2]
-mol = build("Pd", ox=2, ligands=["bpy","Cl","Cl"], geometry="sqp")
-poscar(mol, "Pd_bpy_Cl2.POSCAR")
-
-# Tetrahedral Ni(II): [NiCl4]2-
-mol = build("Ni", ox=2, ligands=["Cl","Cl","Cl","Cl"], geometry="tet")
-poscar(mol, "NiCl4_tet.POSCAR")
-
-# Cr(0) hexacarbonyl: [Cr(CO)6]
-mol = build("Cr", ox=0, ligands=["CO"]*6, geometry="oct")
-poscar(mol, "Cr_CO6.POSCAR")
-
-# Custom SMILES ligand (piperazine N-donor)
-mol = build("Cu", ox=2, ligands=["N1CCNCC1","N1CCNCC1","H2O","H2O"])
-poscar(mol, "Cu_piperazine_H2O2.POSCAR")
-
-# Check the structure
-info(mol)
+# Two isomers → list[Molecule]
+mols = build("Ni", ox=2, ligands=["Cl","Cl","H2O","H2O","H2O","H2O"])
+for mol in mols:
+    poscar(mol, f"NiCl2_H2O4_{mol.label}.POSCAR")
+# → NiCl2_H2O4_cis.POSCAR
+# → NiCl2_H2O4_trans.POSCAR
 ```
 
-### All isomers
+### Denticity modes — colon notation
 
-`build_all_isomers` automatically enumerates all symmetry-distinct configurations:
+Append `:mono`, `:bi`, or `:bridge` to a ligand name to specify how it binds:
+
+| Name | Meaning |
+|------|---------|
+| `HCOO` | monodentate formate — one O donor (default) |
+| `HCOO:bi` | bidentate chelating formate — both O donors, bite angle ~55° |
+| `HCOO:bridge` | bridging formate (same as `mu-HCOO`) |
+| `bpy` | bidentate bipyridine — both N donors (default) |
+| `bpy:mono` | monodentate bipyridine — one N donor |
+
+---
+
+## Nickel examples — formate, water, hydroxide
+
+### Monomers
 
 ```python
-from molbuilder.api import build_all_isomers, poscar
+from molbuilder.api import build, poscar
 
-# [FeCl3(H2O)3] has 2 isomers: fac and mer
-isomers = build_all_isomers("Fe", ox=3,
-    ligands=["Cl","Cl","Cl","H2O","H2O","H2O"])
+# [Ni(H2O)6]²⁺  —  octahedral hexaaqua, one isomer
+mol = build("Ni", ox=2, ligands=["H2O"]*6)
+poscar(mol, "Ni_H2O6.POSCAR")
 
-for iso in isomers:
-    print(iso["label"], iso["molecule"].formula)
-    poscar(iso["molecule"], f"FeCl3_H2O3_{iso['label']}.POSCAR")
-# → fac  Cl3FeH6O3  → FeCl3_H2O3_fac.POSCAR
-# → mer  Cl3FeH6O3  → FeCl3_H2O3_mer.POSCAR
+# [Ni(OH)₂(H2O)₄]  —  two terminal hydroxides, cis and trans
+mols = build("Ni", ox=2, ligands=["OH","OH","H2O","H2O","H2O","H2O"])
+for mol in mols:
+    poscar(mol, f"Ni_OH2_H2O4_{mol.label}.POSCAR")
+# → Ni_OH2_H2O4_cis.POSCAR
+# → Ni_OH2_H2O4_trans.POSCAR
 
-# [PtCl2(NH3)2]: cis-platin and trans-platin
-isomers = build_all_isomers("Pt", ox=2,
-    ligands=["Cl","Cl","NH3","NH3"], geometry="sqp")
-for iso in isomers:
-    poscar(iso["molecule"], f"PtCl2_NH3_2_{iso['label']}.POSCAR")
-# → cis   → PtCl2_NH3_2_cis.POSCAR
-# → trans → PtCl2_NH3_2_trans.POSCAR
+# [Ni(HCOO)₂(H2O)₄]  —  monodentate formate, cis and trans
+mols = build("Ni", ox=2, ligands=["HCOO","HCOO","H2O","H2O","H2O","H2O"])
+for mol in mols:
+    poscar(mol, f"Ni_HCOO2_H2O4_{mol.label}.POSCAR")
+# → Ni_HCOO2_H2O4_cis.POSCAR
+# → Ni_HCOO2_H2O4_trans.POSCAR
 
-# [CoCl4(H2O)2]: cis and trans
-isomers = build_all_isomers("Co", ox=2,
-    ligands=["Cl","Cl","Cl","Cl","H2O","H2O"])
+# [Ni(HCOO-κ²)₂(H2O)₂]  —  bidentate chelating formate, cis and trans
+mols = build("Ni", ox=2, ligands=["HCOO:bi","HCOO:bi","H2O","H2O"], geometry="sqp")
+for mol in mols:
+    poscar(mol, f"Ni_HCOObi2_H2O2_{mol.label}.POSCAR")
+# → Ni_HCOObi2_H2O2_cis.POSCAR
+# → Ni_HCOObi2_H2O2_trans.POSCAR
+
+# [Ni(HCOO-κ²)(HCOO)(H2O)₃]  —  mixed mono+bidentate formate
+mols = build("Ni", ox=2, ligands=["HCOO:bi","HCOO","H2O","H2O","H2O"])
+for mol in (mols if isinstance(mols, list) else [mols]):
+    poscar(mol, f"Ni_HCOObi_HCOO_H2O3_{mol.label}.POSCAR")
+
+# [Ni(HCOO)₂(OH)₂(H2O)₂]  —  mixed formate, hydroxide, water
+mols = build("Ni", ox=2, ligands=["HCOO","HCOO","OH","OH","H2O","H2O"])
+for mol in mols:
+    poscar(mol, f"Ni_HCOO2_OH2_H2O2_{mol.label}.POSCAR")
 ```
 
 ### Dimers
 
 ```python
-# [Rh(CO)2(μ-Cl)]2
-mol = dimer("Rh", ox=1, terminal=["CO","CO"], bridge="mu-Cl", n=2)
-poscar(mol, "Rh2_mu-Cl2_CO4.POSCAR")
+from molbuilder.api import dimer, poscar
 
-# [Pd2(μ-Cl)2Cl2] square planar
-mol = dimer("Pd", ox=2, terminal=["Cl"], bridge="mu-Cl", n=2, geometry="sqp")
-poscar(mol, "Pd2_mu-Cl2_Cl2.POSCAR")
+# [Ni₂(μ-OH)₂(H2O)₈]²⁺  —  di-μ-hydroxo, four waters per Ni
+mol = dimer("Ni", ox=2, terminal=["H2O","H2O","H2O","H2O"], bridge="mu-OH", n=2)
+poscar(mol, "Ni2_muOH2_H2O8.POSCAR")
 
-# M–M bonded dimer with custom distance
-mol = dimer("Re", ox=3, terminal=["Cl","Cl","Cl"], bridge="mu-Cl", n=2,
-            mm_bond=True, mm_distance=2.22)
-poscar(mol, "Re2_quadruple_bond.POSCAR")
-```
+# [Ni₂(μ-HCOO)₂(H2O)₆]²⁺  —  di-μ-formato, monodentate bridging formate
+mol = dimer("Ni", ox=2, terminal=["H2O","H2O","H2O"], bridge="mu-HCOO", n=2)
+poscar(mol, "Ni2_muHCOO2_H2O6.POSCAR")
 
-### Trimers
+# [Ni₂(μ-OH)(H2O)₈]³⁺  —  single bridging hydroxide
+mol = dimer("Ni", ox=2, terminal=["H2O","H2O","H2O","H2O"], bridge="mu-OH", n=1)
+poscar(mol, "Ni2_muOH_H2O8.POSCAR")
 
-```python
-# Triangular [Ru3(CO)12]-style
-mol = trimer("Ru", ox=0, terminal=["CO","CO","CO","CO"],
-             bridge="mu-CO", arrangement="triangular")
-poscar(mol, "Ru3_triangular_CO12.POSCAR")
-
-# Linear Fe3 with μ-OH bridges
-mol = trimer("Fe", ox=3, terminal=["H2O","H2O"],
-             bridge="mu-OH", arrangement="linear")
-poscar(mol, "Fe3_linear_mu-OH.POSCAR")
-```
-
-### Also write XYZ
-
-```python
-mol = build("Fe", ox=3, ligands=["Cl"]*6)
-poscar(mol, "FeCl6.POSCAR")
-xyz(mol,   "FeCl6.xyz")
+# [Ni₂(μ-OH)₂(HCOO)₂(H2O)₄]  —  mixed terminal formate + bridging hydroxide
+mol = dimer("Ni", ox=2, terminal=["HCOO","H2O","H2O"], bridge="mu-OH", n=2)
+poscar(mol, "Ni2_muOH2_HCOO2_H2O4.POSCAR")
 ```
 
 ---
@@ -124,127 +129,119 @@ xyz(mol,   "FeCl6.xyz")
 ## CLI
 
 ```bash
-PYTHONPATH=/path/to/project python molbuilder/cli.py [options]
+PYTHONPATH=. python molbuilder/cli.py --metal SYMBOL --ox N --ligands L1 L2 ... --out FILE.POSCAR
 ```
 
-### Examples
+Isomers are automatic. When multiple isomers exist the `--out` base name is used
+with the label appended: `Ni_HCOO2.POSCAR` → `Ni_HCOO2_cis.POSCAR` + `Ni_HCOO2_trans.POSCAR`.
+
+### Ni + formate/water/hydroxide examples
 
 ```bash
-# [FeCl3(H2O)3] octahedral — print POSCAR to stdout and save file
+# [Ni(H2O)6]²⁺
 PYTHONPATH=. python molbuilder/cli.py \
-    --metal Fe --ox 3 \
-    --ligands Cl Cl Cl H2O H2O H2O \
-    --out FeCl3_H2O3.POSCAR --print
+    --metal Ni --ox 2 \
+    --ligands H2O H2O H2O H2O H2O H2O \
+    --out Ni_H2O6.POSCAR
 
-# [Pd(bpy)Cl2] square planar
+# [Ni(HCOO)₂(H2O)₄]  →  Ni_HCOO2_H2O4_cis.POSCAR + Ni_HCOO2_H2O4_trans.POSCAR
 PYTHONPATH=. python molbuilder/cli.py \
-    --metal Pd --ox 2 \
-    --ligands bpy Cl Cl --geometry sqp \
-    --out Pd_bpy_Cl2.POSCAR
+    --metal Ni --ox 2 \
+    --ligands HCOO HCOO H2O H2O H2O H2O \
+    --out Ni_HCOO2_H2O4.POSCAR
 
-# All isomers of [FeCl3(H2O)3] → FeCl3_H2O3_fac.POSCAR + FeCl3_H2O3_mer.POSCAR
+# [Ni(HCOO-κ²)₂(H2O)₂] bidentate formate, sqp  →  _cis + _trans
 PYTHONPATH=. python molbuilder/cli.py \
-    --metal Fe --ox 3 \
-    --ligands Cl Cl Cl H2O H2O H2O \
-    --all-isomers --out FeCl3_H2O3.POSCAR
+    --metal Ni --ox 2 \
+    --ligands HCOO:bi HCOO:bi H2O H2O \
+    --geometry sqp \
+    --out Ni_HCOObi2_H2O2.POSCAR
 
-# cis/trans isomers of [PtCl2(NH3)2] → PtCl2_NH3_2_cis.POSCAR + ..._trans.POSCAR
+# [Ni(OH)₂(H2O)₄]  →  _cis + _trans
 PYTHONPATH=. python molbuilder/cli.py \
-    --metal Pt --ox 2 \
-    --ligands Cl Cl NH3 NH3 --geometry sqp \
-    --all-isomers --out PtCl2_NH3_2.POSCAR
+    --metal Ni --ox 2 \
+    --ligands OH OH H2O H2O H2O H2O \
+    --out Ni_OH2_H2O4.POSCAR
 
-# [Rh(CO)2(μ-Cl)]2 dimer
+# [Ni(HCOO)₂(OH)₂(H2O)₂]  →  multiple isomers
 PYTHONPATH=. python molbuilder/cli.py \
-    --dimer --metal Rh --ox 1 \
-    --ligands CO CO --bridge mu-Cl --n-bridges 2 \
-    --out Rh2_mu-Cl2_CO4.POSCAR
+    --metal Ni --ox 2 \
+    --ligands HCOO HCOO OH OH H2O H2O \
+    --out Ni_HCOO2_OH2_H2O2.POSCAR
 
-# Ru3 triangular trimer
+# [Ni₂(μ-OH)₂(H2O)₈]²⁺
 PYTHONPATH=. python molbuilder/cli.py \
-    --trimer --metal Ru --ox 0 \
-    --ligands CO CO CO CO --bridge mu-CO \
-    --arrangement triangular --out Ru3_triangular_CO12.POSCAR
+    --dimer --metal Ni --ox 2 \
+    --ligands H2O H2O H2O H2O \
+    --bridge mu-OH --n-bridges 2 \
+    --out Ni2_muOH2_H2O8.POSCAR
 
-# List available ligands / geometries
-PYTHONPATH=. python molbuilder/cli.py --list-ligands
-PYTHONPATH=. python molbuilder/cli.py --list-geometries
-
-# Custom SMILES ligand + standard ligands, also write XYZ
+# [Ni₂(μ-HCOO)₂(H2O)₆]²⁺  monodentate bridging formate
 PYTHONPATH=. python molbuilder/cli.py \
-    --metal Fe --ox 3 \
-    --smiles-ligands "N1CCNCC1" --smiles-count 3 \
-    --ligands Cl Cl Cl --xyz --out Fe_piperazine3_Cl3.POSCAR
+    --dimer --metal Ni --ox 2 \
+    --ligands H2O H2O H2O \
+    --bridge mu-HCOO --n-bridges 2 \
+    --out Ni2_muHCOO2_H2O6.POSCAR
+
+# [Ni₂(μ-OH)₂(HCOO)₂(H2O)₄]  terminal formate + bridging hydroxide
+PYTHONPATH=. python molbuilder/cli.py \
+    --dimer --metal Ni --ox 2 \
+    --ligands HCOO H2O H2O \
+    --bridge mu-OH --n-bridges 2 \
+    --out Ni2_muOH2_HCOO2_H2O4.POSCAR
 ```
 
-### Extended CLI (custom POSCAR ligands, denticity modes, bridging)
+### Custom POSCAR ligand
 
 ```bash
-# Standard build (same as cli.py)
-PYTHONPATH=. python molbuilder/cli_extended.py \
-    --metal Fe --ox 3 \
-    --ligands Cl Cl Cl H2O H2O H2O \
-    --out FeCl3_H2O3.POSCAR --print
-
-# All isomers via extended CLI
-PYTHONPATH=. python molbuilder/cli_extended.py \
-    --metal Fe --ox 3 \
-    --ligands Cl Cl Cl H2O H2O H2O \
-    --all-isomers --out FeCl3_H2O3.POSCAR
-
-# Custom POSCAR ligand
-PYTHONPATH=. python molbuilder/cli_extended.py \
-    --metal Fe --ox 2 \
-    --ligands Cl Cl Cl Cl \
+PYTHONPATH=. python molbuilder/cli.py \
+    --metal Ni --ox 2 \
+    --ligands H2O H2O H2O H2O H2O \
     --custom-ligand my_ligand.POSCAR \
-    --custom-donor-atoms 0,2 \
-    --custom-ligand-charge 0 \
-    --custom-ligand-name myligand \
-    --out Fe_custom_ligand.POSCAR
+    --donor-atoms 0 \
+    --ligand-charge -1 \
+    --out Ni_custom_H2O5.POSCAR
+```
 
-# Bidentate bpy with denticity mode
-PYTHONPATH=. python molbuilder/cli_extended.py \
-    --metal Fe --ox 2 \
-    --ligand-mode bpy:bi \
-    --ligand-mode Cl \
-    --ligand-mode Cl \
-    --geometry oct \
-    --out Fe_bpy_Cl2.POSCAR
+### Other useful flags
 
-# Dimer with bridging formate
-PYTHONPATH=. python molbuilder/cli_extended.py \
-    --dimer --metal Fe --ox 3 \
-    --ligands H2O H2O \
-    --bridge-ligand HCOO:bi \
-    --bridge-count 2 \
-    --geometry oct \
-    --out Fe2_formate_dimer.POSCAR
+```bash
+# Print POSCAR to stdout as well as writing file
+PYTHONPATH=. python molbuilder/cli.py --metal Ni --ox 2 \
+    --ligands H2O H2O H2O H2O H2O H2O --out Ni_H2O6.POSCAR --print
+
+# Also write XYZ alongside POSCAR
+PYTHONPATH=. python molbuilder/cli.py --metal Ni --ox 2 \
+    --ligands H2O H2O H2O H2O H2O H2O --out Ni_H2O6.POSCAR --xyz
+
+# List all available ligands
+PYTHONPATH=. python molbuilder/cli.py --list-ligands
+
+# List all supported geometries
+PYTHONPATH=. python molbuilder/cli.py --list-geometries
 ```
 
 ---
 
-## Isomer Reference
+## Isomer reference
 
 | Formula | Geometry | Isomers |
 |---------|----------|---------|
-| MA₆     | oct      | 1 |
-| MA₅B    | oct      | 1 |
-| MA₄B₂   | oct      | 2 (cis, trans) |
-| MA₃B₃   | oct      | 2 (fac, mer) |
-| MA₄BC   | oct      | 2 |
-| MA₂B₂C₂ | oct     | 5 |
-| MA₃B₂C  | oct      | 3 |
-| MA₄     | sqp      | 1 |
-| MA₃B    | sqp      | 1 |
-| MA₂B₂   | sqp      | 2 (cis, trans) |
-| MA₂BC   | sqp      | 2 |
+| MA₆ | oct | 1 |
+| MA₅B | oct | 1 |
+| MA₄B₂ | oct | 2 (cis, trans) |
+| MA₃B₃ | oct | 2 (fac, mer) |
+| MA₄BC | oct | 2 |
+| MA₂B₂C₂ | oct | 5 |
+| MA₄ | sqp | 1 |
+| MA₂B₂ | sqp | 2 (cis, trans) |
 
 ---
 
-## Supported Geometries
+## Supported geometries
 
 | Key | Name | CN |
-|-----|------|-----|
+|-----|------|----|
 | `lin` | Linear | 2 |
 | `bent` | Bent | 2 |
 | `tp` | Trigonal planar | 3 |
@@ -261,47 +258,44 @@ PYTHONPATH=. python molbuilder/cli_extended.py \
 
 ---
 
-## Ligand Library (selection)
+## Ligand library (selection)
 
-| Name | Donor | Charge | Denticity |
-|------|-------|--------|-----------|
-| `CO` | C | 0 | 1 |
-| `H2O` / `aqua` | O | 0 | 1 |
-| `NH3` / `ammine` | N | 0 | 1 |
-| `Cl`, `Br`, `I`, `F` | halide | −1 | 1 |
-| `CN` | C | −1 | 1 |
-| `OH` | O | −1 | 1 |
-| `SCN` | S | −1 | 1 |
-| `PPh3` | P | 0 | 1 |
-| `py` | N | 0 | 1 |
-| `MeCN` | N | 0 | 1 |
-| `en` | N,N | 0 | 2 |
-| `bpy` / `bipy` | N,N | 0 | 2 |
-| `phen` | N,N | 0 | 2 |
-| `acac` | O,O | −1 | 2 |
-| `ox` | O,O | −2 | 2 |
-| `tpy` / `terpy` | N,N,N | 0 | 3 |
-| `EDTA` | N,N,O,O,O,O | −4 | 6 |
-| `Cp` | C×5 (η⁵) | −1 | cyclopentadienyl |
-| `mu-Cl`, `mu-OH`, `mu-O` | bridging | varies | bridging |
+| Name | Donor | Charge | Notes |
+|------|-------|--------|-------|
+| `H2O` / `aqua` | O | 0 | includes 2 H |
+| `OH` | O | −1 | terminal hydroxide |
+| `mu-OH` | O | −1 | bridging hydroxide |
+| `NH3` / `ammine` | N | 0 | includes 3 H |
+| `Cl`, `Br`, `I`, `F` | halide | −1 | |
+| `CO` | C | 0 | |
+| `CN` | C | −1 | |
+| `HCOO` / `formate` | O | −1 | monodentate (default) |
+| `HCOO:bi` | O,O | −1 | bidentate chelating, bite ~55° |
+| `mu-HCOO` / `HCOO:bridge` | O | −1 | bridging |
+| `HCOOH` | O | 0 | formic acid, monodentate |
+| `HCOOH:bi` | O,O | 0 | formic acid bidentate |
+| `OAc` / `acetate` | O | −1 | monodentate acetate |
+| `OAc:bi` | O,O | −1 | bidentate acetate |
+| `mu-OAc` | O | −1 | bridging acetate |
+| `acac` | O,O | −1 | acetylacetonate |
+| `ox` / `oxalate` | O,O | −2 | |
+| `en` | N,N | 0 | ethylenediamine |
+| `bpy` / `bipy` | N,N | 0 | bidentate (default) |
+| `bpy:mono` | N | 0 | monodentate |
+| `phen` | N,N | 0 | phenanthroline |
+| `tpy` / `terpy` | N,N,N | 0 | |
+| `EDTA` | N,N,O,O,O,O | −4 | |
+| `Cp` | C×5 | −1 | cyclopentadienyl η⁵ |
+| `mu-Cl`, `mu-O` | bridging | varies | |
+| `PPh3`, `PMe3` | P | 0 | |
+| `py` / `pyridine` | N | 0 | |
+| `MeCN` | N | 0 | |
+| `SCN` | S | −1 | |
+| `dmso` / `DMSO` | S | 0 | |
 
 ---
 
-## Bond Length Sources
+## Bond length sources
 
-Bond lengths are drawn from a database of CSD-averaged values (Orpen et al. 1989) keyed by `(metal, oxidation_state, donor_atom, geometry)`. The fallback hierarchy is:
-
-1. Exact match
-2. Same metal/ox/donor, any geometry (averaged)
-3. Same metal/donor, any oxidation state (averaged)
-4. Sum of Alvarez (2008) covalent radii + 0.1 Å
-
----
-
-## POSCAR Format
-
-The output is a standard VASP POSCAR file:
-- Atoms centered in a cubic vacuum box (default 15 Å padding per side → 30 Å total per direction)
-- Species sorted by atomic number (heaviest first: metal → donor atoms → H)
-- Cartesian coordinates in Ångströms
-- Formal charge and spin multiplicity in the comment line
+CSD-averaged values (Orpen et al. 1989) keyed by `(metal, oxidation_state, donor_atom, geometry)`.
+Fallback: same metal/donor averaged over geometries → averaged over oxidation states → Alvarez (2008) covalent radii sum.
