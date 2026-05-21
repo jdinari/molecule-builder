@@ -60,8 +60,9 @@ LIGAND_LIBRARY = {
     "HCOO:bridge":  {"smiles": "[O-]C=O", "donors": [0],    "charge": -1, "denticity": 1, "donor_atoms": ["O"], "is_bridging": True},
     "mu-HCOO":      {"smiles": "[O-]C=O", "donors": [0],    "charge": -1, "denticity": 1, "donor_atoms": ["O"], "is_bridging": True},
     # Formic acid HCOOH: neutral, mono or bidentate
-    "HCOOH":        {"smiles": "OC=O",    "donors": [0],    "charge":  0, "denticity": 1, "donor_atoms": ["O"]},
-    "HCOOH:mono":   {"smiles": "OC=O",    "donors": [0],    "charge":  0, "denticity": 1, "donor_atoms": ["O"]},
+    # Formic acid HCOOH: coordinates via carbonyl O (C=O), index 2 in SMILES OC=O
+    "HCOOH":        {"smiles": "OC=O",    "donors": [2],    "charge":  0, "denticity": 1, "donor_atoms": ["O"]},
+    "HCOOH:mono":   {"smiles": "OC=O",    "donors": [2],    "charge":  0, "denticity": 1, "donor_atoms": ["O"]},
     "HCOOH:bi":     {"smiles": "OC=O",    "donors": [0, 2], "charge":  0, "denticity": 2, "donor_atoms": ["O", "O"], "bite_angle": 52.0},
     # Acetate OAc-
     "OAc":          {"smiles": "CC(=O)[O-]", "donors": [2], "charge": -1, "denticity": 1, "donor_atoms": ["O"]},

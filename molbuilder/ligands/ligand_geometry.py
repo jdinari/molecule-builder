@@ -104,67 +104,57 @@ _FALLBACK_GEOMS = {
     "F":   ("F",  [("F",  [0., 0., 0.])]),
 
     # ── formate HCOO-: O donor ────────────────────────────────────────────────
-    # O(donor)-C = 1.26 Å; C=O = 1.25 Å at ~120° from O-C bond;
-    # H directly on C at ~120° from each C-O bond (in plane)
-    # Layout: donor O at origin, C at (-1.26, 0, 0),
-    #   second O at (-1.89, +1.09, 0)  [120° C-O-O angle in formate plane]
-    #   H at (-1.89, -1.09, 0)         [120° other side — on C]
-    # But H is bonded to C not O: C-H = 1.09 Å, H-C-O angle ~120°
-    # Correct: H at (-1.26 - 1.09*cos(60°), -1.09*sin(60°), 0)
-    #        = (-1.26 - 0.545, -0.944, 0) = (-1.805, -0.944, 0)
+    # M-O-C angle = 120° (sp2 carboxylate oxygen).
+    # Tail (C, O2, H) placed in the xz plane so adjacent-site clashes are
+    # resolvable by rotation around the M→donor axis.
+    # O-C = 1.26 Å, C=O = 1.25 Å, C-H = 1.09 Å
     "HCOO": ("O", [
         ("O", [ 0.000,  0.000,  0.000]),
-        ("C", [-1.260,  0.000,  0.000]),
-        ("O", [-1.890,  1.090,  0.000]),
-        ("H", [-1.805, -0.944,  0.000]),
+        ("C", [-0.630,  0.000,  1.091]),
+        ("O", [-0.005,  0.000,  2.174]),
+        ("H", [-1.720,  0.000,  1.091]),
     ]),
     "formate": ("O", [
         ("O", [ 0.000,  0.000,  0.000]),
-        ("C", [-1.260,  0.000,  0.000]),
-        ("O", [-1.890,  1.090,  0.000]),
-        ("H", [-1.805, -0.944,  0.000]),
+        ("C", [-0.630,  0.000,  1.091]),
+        ("O", [-0.005,  0.000,  2.174]),
+        ("H", [-1.720,  0.000,  1.091]),
     ]),
     "HCOO:mono": ("O", [
         ("O", [ 0.000,  0.000,  0.000]),
-        ("C", [-1.260,  0.000,  0.000]),
-        ("O", [-1.890,  1.090,  0.000]),
-        ("H", [-1.805, -0.944,  0.000]),
+        ("C", [-0.630,  0.000,  1.091]),
+        ("O", [-0.005,  0.000,  2.174]),
+        ("H", [-1.720,  0.000,  1.091]),
     ]),
     "HCOO:bridge": ("O", [
         ("O", [ 0.000,  0.000,  0.000]),
-        ("C", [-1.260,  0.000,  0.000]),
-        ("O", [-1.890,  1.090,  0.000]),
-        ("H", [-1.805, -0.944,  0.000]),
+        ("C", [-0.630,  0.000,  1.091]),
+        ("O", [-0.005,  0.000,  2.174]),
+        ("H", [-1.720,  0.000,  1.091]),
     ]),
     "mu-HCOO": ("O", [
         ("O", [ 0.000,  0.000,  0.000]),
-        ("C", [-1.260,  0.000,  0.000]),
-        ("O", [-1.890,  1.090,  0.000]),
-        ("H", [-1.805, -0.944,  0.000]),
+        ("C", [-0.630,  0.000,  1.091]),
+        ("O", [-0.005,  0.000,  2.174]),
+        ("H", [-1.720,  0.000,  1.091]),
     ]),
 
-    # ── formic acid HCOOH: O(hydroxyl) donor ──────────────────────────────────
-    # O(donor)-H = 0.972 Å pointing toward metal (+x); O-C = 1.34 Å into -x;
-    # C=O at 124°; C-H at 116°
-    # H (on donor O) at (+0.972, 0, 0) — pointing toward metal side
-    # C at (-1.34, 0, 0)
-    # =O at (-1.34 + 1.20*cos(124°-180°), 1.20*sin(56°), 0)
-    #   = (-1.34 - 0.671, 0.995, 0) = (-2.011, 0.995, 0)  [approx]
-    # H(formyl) on C at 116° from C=O: (-1.34 - 1.09*cos(64°), -1.09*sin(64°), 0)
-    #   = (-1.34 - 0.478, -0.980, 0) = (-1.818, -0.980, 0)
+    # ── formic acid HCOOH: carbonyl O donor (C=O oxygen) ─────────────────────
+    # M-O=C angle = 125°. Tail in xz plane for rotation-resolvable clashes.
+    # C=O = 1.20 Å, C-O(H) = 1.34 Å, O=C-O(H) = 124°, C-H = 1.09 Å, O-H = 0.972 Å
     "HCOOH": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("H", [ 0.972,  0.000,  0.000]),
-        ("C", [-1.340,  0.000,  0.000]),
-        ("O", [-2.011,  0.995,  0.000]),
-        ("H", [-1.818, -0.980,  0.000]),
+        ("O", [ 0.000,  0.000,  0.000]),   # carbonyl O — donor
+        ("C", [-0.688,  0.000,  0.983]),
+        ("O", [-0.208,  0.000,  2.234]),   # hydroxyl O
+        ("H", [-1.765,  0.000,  0.812]),   # formyl H on C
+        ("H", [ 0.764,  0.000,  2.209]),   # hydroxyl H
     ]),
     "HCOOH:mono": ("O", [
         ("O", [ 0.000,  0.000,  0.000]),
-        ("H", [ 0.972,  0.000,  0.000]),
-        ("C", [-1.340,  0.000,  0.000]),
-        ("O", [-2.011,  0.995,  0.000]),
-        ("H", [-1.818, -0.980,  0.000]),
+        ("C", [-0.688,  0.000,  0.983]),
+        ("O", [-0.208,  0.000,  2.234]),
+        ("H", [-1.765,  0.000,  0.812]),
+        ("H", [ 0.764,  0.000,  2.209]),
     ]),
 
     # ── hydride ───────────────────────────────────────────────────────────────
@@ -459,3 +449,140 @@ def get_ligand_atoms_multidentate(
     for sym, pos in zip(donor_symbols, donor_positions):
         result.append((sym, pos))
     return result
+
+
+# ── clash detection and resolution ───────────────────────────────────────────
+
+# Minimum acceptable non-bonded distances by element-pair
+_MIN_NONBONDED = {
+    ("H",  "H"):  1.40,
+    ("H",  "C"):  1.70,
+    ("H",  "N"):  1.70,
+    ("H",  "O"):  1.40,   # H...O contacts: relax for bulky ligand initial structures
+    ("H",  "S"):  1.90,
+    ("H",  "P"):  1.90,
+    ("H",  "Cl"): 1.90,
+    ("C",  "C"):  2.20,
+    ("C",  "N"):  2.10,
+    ("C",  "O"):  1.80,   # formate C is ~1.7-1.9 Å from adjacent donor O in crystal structures
+    ("N",  "O"):  1.90,
+    ("O",  "O"):  2.00,
+}
+
+# Maximum bond lengths (to distinguish bonded from non-bonded short contacts)
+_MAX_BOND = {
+    ("H",  "C"):  1.15,
+    ("H",  "N"):  1.15,
+    ("H",  "O"):  1.10,
+    ("H",  "S"):  1.40,
+    ("H",  "P"):  1.50,
+    ("C",  "C"):  1.60,
+    ("C",  "N"):  1.55,
+    ("C",  "O"):  1.55,
+    ("C",  "S"):  1.85,
+    ("N",  "N"):  1.50,
+    ("N",  "O"):  1.50,
+    ("O",  "O"):  1.55,
+}
+
+
+def _pair_key(s1: str, s2: str) -> tuple:
+    return tuple(sorted([s1, s2]))
+
+
+def _is_bonded(s1: str, s2: str, d: float) -> bool:
+    return d <= _MAX_BOND.get(_pair_key(s1, s2), 2.0)
+
+
+def _is_clash(s1: str, s2: str, d: float) -> bool:
+    """Return True if two non-bonded atoms are closer than the minimum allowed distance."""
+    if _is_bonded(s1, s2, d):
+        return False
+    return d < _MIN_NONBONDED.get(_pair_key(s1, s2), 2.00)
+
+
+def check_clashes(new_atoms: List[Tuple[str, np.ndarray]],
+                  existing_atoms: List[Tuple[str, np.ndarray]]) -> List[tuple]:
+    """
+    Find all clashes between new_atoms and existing_atoms.
+    Returns list of (sym_new, pos_new, sym_exist, pos_exist, distance).
+    """
+    clashes = []
+    for sn, pn in new_atoms:
+        for se, pe in existing_atoms:
+            d = np.linalg.norm(pn - pe)
+            if _is_clash(sn, se, d):
+                clashes.append((sn, pn, se, pe, d))
+    return clashes
+
+
+def resolve_clash_by_rotation(new_atoms: List[Tuple[str, np.ndarray]],
+                               donor_abs_pos: np.ndarray,
+                               metal_pos: np.ndarray,
+                               existing_atoms: List[Tuple[str, np.ndarray]],
+                               n_steps: int = 36) -> List[Tuple[str, np.ndarray]]:
+    """
+    Try rotating the ligand around the metal→donor axis in n_steps increments
+    to find the orientation with the fewest / least severe clashes.
+
+    Parameters
+    ----------
+    new_atoms      : list of (symbol, absolute_position) for the new ligand
+    donor_abs_pos  : absolute position of the donor atom
+    metal_pos      : absolute position of the metal
+    existing_atoms : already-placed atoms to check against
+    n_steps        : number of rotation increments to try (default 36 = 10° steps)
+
+    Returns
+    -------
+    Best rotated atom list (fewest clashes, then minimum worst-case distance sum).
+    """
+    axis = donor_abs_pos - metal_pos
+    norm = np.linalg.norm(axis)
+    if norm < 1e-6:
+        return new_atoms
+    axis = axis / norm
+
+    def rotate_about_axis(atoms, theta):
+        """Rotate atoms around the metal→donor axis by theta radians."""
+        K = np.array([[0,       -axis[2],  axis[1]],
+                      [axis[2],  0,        -axis[0]],
+                      [-axis[1], axis[0],   0      ]])
+        R = np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * (K @ K)
+        rotated = []
+        for sym, pos in atoms:
+            # rotate around metal position
+            p = pos - metal_pos
+            rotated.append((sym, R @ p + metal_pos))
+        return rotated
+
+    best_atoms = new_atoms
+    best_score = _clash_score(new_atoms, existing_atoms)
+
+    for step in range(1, n_steps):
+        theta = 2 * np.pi * step / n_steps
+        rotated = rotate_about_axis(new_atoms, theta)
+        score = _clash_score(rotated, existing_atoms)
+        if score < best_score:
+            best_score = score
+            best_atoms = rotated
+        if best_score == 0:
+            break
+
+    return best_atoms
+
+
+def _clash_score(new_atoms: List[Tuple[str, np.ndarray]],
+                 existing_atoms: List[Tuple[str, np.ndarray]]) -> float:
+    """
+    Score = sum of (min_dist - actual_dist) for all clashing pairs.
+    0 means no clashes.
+    """
+    score = 0.0
+    for sn, pn in new_atoms:
+        for se, pe in existing_atoms:
+            d = np.linalg.norm(pn - pe)
+            if _is_clash(sn, se, d):
+                threshold = _MIN_NONBONDED.get(_pair_key(sn, se), 2.0)
+                score += (threshold - d)
+    return score
