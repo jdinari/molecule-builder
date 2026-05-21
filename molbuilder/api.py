@@ -3,12 +3,18 @@ api.py
 ======
 Public API for molbuilder.
 
-  from molbuilder.api import build, build_all_isomers, dimer, trimer, poscar, xyz, info
+    from molbuilder.api import build, dimer, trimer, poscar, xyz, info
+
+build() always returns all symmetry-distinct isomers automatically:
+  - One isomer  → returns a single Molecule
+  - Two or more → returns a list of Molecule objects, one per isomer
+
+Custom POSCAR ligands are supported directly via load_ligand_from_poscar().
+Denticity modes use colon notation: "HCOO:bi", "bpy:mono", etc.
 """
 
 from __future__ import annotations
 
-import re
 from collections import Counter
 from pathlib import Path
 from typing import List, Optional, Dict, Union
@@ -21,17 +27,18 @@ from molbuilder.core.geometry import (
 from molbuilder.core.bond_lengths import get_bond_length
 from molbuilder.core.isomers import enumerate_isomers
 from molbuilder.ligands.library import get_ligand, list_ligands
-from molbuilder.ligands.ligand_geometry import get_ligand_atoms, get_ligand_atoms_multidentate, _rodrigues_rotation
+from molbuilder.ligands.ligand_geometry import (
+    get_ligand_atoms, get_ligand_atoms_multidentate, _rodrigues_rotation,
+)
 from molbuilder.output.poscar_writer import poscar_to_string
 from molbuilder.output.xyz_writer import xyz_to_string
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Atomic masses (for spin-state estimation)
-# ──────────────────────────────────────────────────────────────────────────────
-_ELECTRON_CONFIG: Dict[str, Dict[int, int]] = {
-    # d-electron counts {metal: {ox_state: d_electrons}}
-    "Sc": {3: 0}, "Ti": {4: 0, 3: 1, 2: 2},
+# ── spin-state estimation ────────────────────────────────────────────────────
+
+_D_ELECTRONS: Dict[str, Dict[int, int]] = {
+    "Sc": {3: 0},
+    "Ti": {4: 0, 3: 1, 2: 2},
     "V":  {5: 0, 4: 1, 3: 2, 2: 3},
     "Cr": {6: 0, 3: 3, 2: 4, 0: 6},
     "Mn": {7: 0, 4: 3, 3: 4, 2: 5},
@@ -53,64 +60,153 @@ _ELECTRON_CONFIG: Dict[str, Dict[int, int]] = {
     "Au": {3: 8, 1: 10},
 }
 
+_UNPAIRED = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 4, 7: 3, 8: 2, 9: 1, 10: 0}
 
-def _d_electrons(metal: str, ox: int) -> int:
-    return _ELECTRON_CONFIG.get(metal, {}).get(ox, 0)
-
-
-def _spin_multiplicity(metal: str, ox: int, geometry: str) -> int:
-    """Rough spin-state guess: high-spin for 4/5-coord+, low-spin for strong-field."""
-    d = _d_electrons(metal, ox)
-    if d == 0 or d == 10:
-        return 1
-    # Very rough: octahedral 3d metals often high-spin unless CO/CN ligands
-    # Default: high-spin
-    unpaired = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 4, 7: 3, 8: 2, 9: 1, 10: 0}
-    return unpaired.get(d, 1) + 1
+def _spin_multiplicity(metal: str, ox: int) -> int:
+    d = _D_ELECTRONS.get(metal, {}).get(ox, 0)
+    return _UNPAIRED.get(d, 1) + 1
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Helpers: SMILES ligand  → donor atom element
-# ──────────────────────────────────────────────────────────────────────────────
+# ── SMILES donor-atom heuristic ──────────────────────────────────────────────
 
 def _donor_from_smiles(smiles: str) -> str:
-    """Guess donor atom from SMILES (very rough heuristic)."""
-    if not smiles:
-        return "N"
-    # look for explicit heteroatoms in order of priority
     for sym in ["P", "S", "N", "O", "C"]:
         if sym in smiles:
             return sym
     return "C"
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Ligand expansion: turn a name/SMILES into atoms + bond length
-# ──────────────────────────────────────────────────────────────────────────────
+# ── custom POSCAR ligand support ─────────────────────────────────────────────
 
-def _expand_ligand(lig_name: str, metal: str, ox: int, geometry: str):
+class CustomLigand:
     """
-    Resolve a ligand name to a dict carrying full 3D geometry (including H).
-    
-    Returns dict with keys:
-      atoms         – list of (symbol, rel_pos) relative to donor at origin,
-                      ligand bulk pointing along -x (metal will be at +x)
-      donor_atom    – element symbol of primary donor
-      donor_atoms   – list of all donor element symbols
-      smiles        – SMILES string
-      charge        – formal charge
-      denticity     – number of donor atoms
-      bite_angle    – chelate bite angle (deg), or None
-      vectors_count – number of geometry vectors consumed
-      name          – ligand name string
+    A ligand loaded from a POSCAR file.
+
+    Parameters
+    ----------
+    poscar_path : str or Path
+    donor_atom_indices : list of int
+        0-based atom indices in the POSCAR that coordinate to the metal.
+    charge : int
+        Formal charge of the free ligand.
+    name : str, optional
+        Human-readable name (defaults to filename stem).
+
+    Example
+    -------
+    >>> lig = CustomLigand("my_ligand.POSCAR", donor_atom_indices=[0, 2], charge=0)
+    >>> mol = build("Ni", ox=2, ligands=["H2O", "H2O", "H2O", "H2O", lig])
     """
-    # Detect raw SMILES
+
+    def __init__(self, poscar_path, donor_atom_indices: List[int],
+                 charge: int = 0, name: Optional[str] = None):
+        self.poscar_path = Path(poscar_path)
+        self.donor_atom_indices = donor_atom_indices
+        self.charge = charge
+        self.name = name or self.poscar_path.stem
+        self.symbols, self.positions = self._parse()
+
+    def _parse(self):
+        lines = self.poscar_path.read_text().strip().splitlines()
+        scale = float(lines[1])
+        cell = np.array([[float(x) for x in lines[i].split()] for i in range(2, 5)]) * scale
+        syms_line = lines[5].split()
+        counts = [int(x) for x in lines[6].split()]
+        symbols = [s for s, n in zip(syms_line, counts) for _ in range(n)]
+        is_cart = lines[7].strip()[0].upper() == "C"
+        positions = []
+        for i in range(8, 8 + len(symbols)):
+            coords = np.array([float(x) for x in lines[i].split()[:3]])
+            positions.append(coords if is_cart else coords @ cell)
+        return symbols, np.array(positions) * (scale if is_cart else 1.0)
+
+    @property
+    def donor_atoms(self):
+        return [self.symbols[i] for i in self.donor_atom_indices]
+
+    @property
+    def denticity(self):
+        return len(self.donor_atom_indices)
+
+    def __repr__(self):
+        return f"CustomLigand({self.name!r}, denticity={self.denticity}, charge={self.charge})"
+
+
+def load_ligand_from_poscar(poscar_path, donor_atom_indices: List[int],
+                             charge: int = 0, name: Optional[str] = None) -> CustomLigand:
+    """
+    Load a custom ligand from a POSCAR file.
+
+    Parameters
+    ----------
+    poscar_path : str or Path
+    donor_atom_indices : list of int
+        0-based atom indices that coordinate to the metal.
+    charge : int
+        Formal charge of the free ligand (default 0).
+    name : str, optional
+
+    Returns
+    -------
+    CustomLigand
+
+    Example
+    -------
+    >>> lig = load_ligand_from_poscar("norbornane.POSCAR", [0, 2], charge=0)
+    >>> mol = build("Pd", ox=2, ligands=["Cl", "Cl", lig])
+    """
+    return CustomLigand(poscar_path, donor_atom_indices, charge, name)
+
+
+# ── ligand expansion ─────────────────────────────────────────────────────────
+
+def _expand_ligand(lig, metal: str, ox: int, geometry: str) -> dict:
+    """
+    Turn a ligand name, SMILES string, or CustomLigand into a placement dict.
+
+    Returns
+    -------
+    dict with keys: atoms, donor_atom, donor_atoms, donors, smiles,
+                    charge, denticity, bite_angle, vectors_count, name
+    """
+    # ── CustomLigand ──────────────────────────────────────────────────────────
+    if isinstance(lig, CustomLigand):
+        d_syms = lig.donor_atoms
+        d_idx  = lig.donor_atom_indices
+        # Build atom list relative to first donor at origin
+        d0_pos = lig.positions[d_idx[0]]
+        rel_atoms = [(s, p - d0_pos) for s, p in zip(lig.symbols, lig.positions)]
+        # Rotate bulk away from metal (+x)
+        non_donor_pos = [p for i, (s, p) in enumerate(rel_atoms)
+                         if i not in d_idx and s != "H"]
+        if non_donor_pos:
+            bulk = np.mean(non_donor_pos, axis=0)
+            if np.linalg.norm(bulk) > 1e-3:
+                from molbuilder.ligands.ligand_geometry import _rodrigues_rotation
+                R = _rodrigues_rotation(bulk / np.linalg.norm(bulk),
+                                        np.array([-1., 0., 0.]))
+                rel_atoms = [(s, R @ p) for s, p in rel_atoms]
+        return {
+            "atoms": rel_atoms,
+            "donor_atom": d_syms[0],
+            "donor_atoms": d_syms,
+            "donors": d_idx,
+            "smiles": "",
+            "charge": lig.charge,
+            "denticity": lig.denticity,
+            "bite_angle": None,
+            "vectors_count": lig.denticity,
+            "name": lig.name,
+        }
+
+    lig_name = str(lig)
+
+    # ── raw SMILES ────────────────────────────────────────────────────────────
     is_smiles = ("=" in lig_name or "#" in lig_name or
-                 "(" in lig_name or "[" in lig_name or
-                 "." in lig_name)
+                 "(" in lig_name or "[" in lig_name)
     if not is_smiles:
         try:
-            lig = get_ligand(lig_name)
+            lig_data = get_ligand(lig_name)
         except KeyError:
             is_smiles = True
 
@@ -121,6 +217,7 @@ def _expand_ligand(lig_name: str, metal: str, ox: int, geometry: str):
             "atoms": full_atoms,
             "donor_atom": donor,
             "donor_atoms": [donor],
+            "donors": [0],
             "smiles": lig_name,
             "charge": 0,
             "denticity": 1,
@@ -129,13 +226,13 @@ def _expand_ligand(lig_name: str, metal: str, ox: int, geometry: str):
             "name": lig_name,
         }
 
-    lig = get_ligand(lig_name)
-    donor_atoms = lig.get("donor_atoms", ["N"])
-    smiles = lig.get("smiles", "")
-    donor_indices = lig.get("donors", [0])
+    # ── named ligand ──────────────────────────────────────────────────────────
+    lig_data = get_ligand(lig_name)
+    donor_atoms  = lig_data.get("donor_atoms", ["N"])
+    smiles       = lig_data.get("smiles", "")
+    donor_indices = lig_data.get("donors", [0])
 
-    if lig["denticity"] == 1:
-        # Full geometry: donor at origin, bulk along -x
+    if lig_data["denticity"] == 1:
         full_atoms = get_ligand_atoms(lig_name, smiles, donor_atoms[0],
                                       donor_indices[0] if donor_indices else 0)
         return {
@@ -144,215 +241,113 @@ def _expand_ligand(lig_name: str, metal: str, ox: int, geometry: str):
             "donor_atoms": donor_atoms,
             "donors": donor_indices,
             "smiles": smiles,
-            "charge": lig["charge"],
+            "charge": lig_data["charge"],
             "denticity": 1,
             "bite_angle": None,
             "vectors_count": 1,
             "name": lig_name,
         }
 
-    # Multidentate
-    bite = lig.get("bite_angle", 90.0)
+    # multidentate
     return {
-        "atoms": [],          # filled in during placement using get_ligand_atoms_multidentate
+        "atoms": [],
         "donor_atom": donor_atoms[0],
         "donor_atoms": donor_atoms,
         "donors": donor_indices,
         "smiles": smiles,
-        "charge": lig["charge"],
-        "denticity": lig["denticity"],
-        "bite_angle": bite,
-        "vectors_count": lig["denticity"],
+        "charge": lig_data["charge"],
+        "denticity": lig_data["denticity"],
+        "bite_angle": lig_data.get("bite_angle", 90.0),
+        "vectors_count": lig_data["denticity"],
         "name": lig_name,
     }
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Geometry vector assignment for multidentate ligands
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _place_bidentate(vec1: np.ndarray, vec2: np.ndarray,
-                     d1: str, d2: str,
-                     metal: str, ox: int, geometry: str) -> List[tuple]:
-    """Return [(symbol, position), (symbol, position)] for a bidentate ligand."""
-    bl1 = get_bond_length(metal, ox, d1, geometry)
-    bl2 = get_bond_length(metal, ox, d2, geometry)
-    return [(d1, vec1 * bl1), (d2, vec2 * bl2)]
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Formula builder
-# ──────────────────────────────────────────────────────────────────────────────
+# ── formula ───────────────────────────────────────────────────────────────────
 
 def _make_formula(symbols: List[str]) -> str:
     cnt = Counter(symbols)
-    metals = []
-    rest = {}
-    for el, n in cnt.items():
-        rest[el] = n
-    parts = []
-    for el in sorted(rest, key=lambda s: s):
-        n = rest[el]
-        parts.append(el if n == 1 else f"{el}{n}")
-    return "".join(parts)
+    return "".join(el if n == 1 else f"{el}{n}"
+                   for el, n in sorted(cnt.items()))
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# build()
-# ──────────────────────────────────────────────────────────────────────────────
+# ── core builder ─────────────────────────────────────────────────────────────
 
-def build(metal: str,
-          ox: int,
-          ligands: Optional[List] = None,
-          geometry: Optional[str] = None,
-          spin: Optional[int] = None) -> Molecule:
-    """
-    Build a mononuclear transition-metal complex.
+def _build_single(metal: str, ox: int, ligands: List, geometry: str,
+                  spin: Optional[int]) -> Molecule:
+    """Build one specific arrangement of ligands (no isomer enumeration)."""
+    expanded = [_expand_ligand(l, metal, ox, geometry) for l in ligands]
 
-    Parameters
-    ----------
-    metal : str
-        Element symbol, e.g. "Fe"
-    ox : int
-        Oxidation state, e.g. 3
-    ligands : list of str
-        Ligand names or SMILES strings, e.g. ["Cl","Cl","Cl","H2O","H2O","H2O"]
-    geometry : str, optional
-        Coordination geometry key. Auto-inferred from CN if omitted.
-    spin : int, optional
-        Spin multiplicity. Auto-estimated if omitted.
-
-    Returns
-    -------
-    Molecule
-    """
-    if ligands is None:
-        ligands = []
-
-    # Expand multidentate ligands to count how many coordination sites we need
-    expanded = []      # list of _expand_ligand dicts
-    for lname in ligands:
-        e = _expand_ligand(str(lname), metal, ox, geometry)
-        expanded.append(e)
-
-    # Total coordination number = sum of denticity
-    cn = sum(e["vectors_count"] for e in expanded)
-    if cn == 0:
-        cn = 6  # fallback
-
-    # Resolve geometry
-    if geometry:
-        geom_canon = resolve_geometry(geometry)
-    else:
-        geom_canon = infer_geometry(cn)
+    cn = sum(e["vectors_count"] for e in expanded) or 6
+    geom_canon = resolve_geometry(geometry) if geometry else infer_geometry(cn)
 
     vecs = get_geometry_vectors(geom_canon)
-    if cn > len(vecs):
-        # Pad with extra vectors if needed (unusual case)
-        extra = cn - len(vecs)
-        angle_step = np.pi / (extra + 1)
-        for i in range(extra):
-            a = angle_step * (i + 1)
-            vecs.append(np.array([np.sin(a), np.cos(a), 0.3]))
+    # Pad if needed (unusual high-denticity cases)
+    while cn > len(vecs):
+        a = np.pi * len(vecs) / (cn + 1)
+        vecs.append(np.array([np.sin(a), np.cos(a), 0.3]) /
+                    np.linalg.norm([np.sin(a), np.cos(a), 0.3]))
 
-    # ── assign vectors to ligands ─────────────────────────────────────────
-    mol_atoms: List[Atom] = []
-    vec_idx = 0
-
-    # Metal at origin
-    mol_atoms.append(Atom(symbol=metal, position=np.zeros(3), label=f"{metal}1"))
-
-    total_charge = ox  # metal formal charge
+    mol_atoms: List[Atom] = [Atom(symbol=metal, position=np.zeros(3), label=f"{metal}1")]
+    total_charge = ox
     lig_names_out = []
+    vec_idx = 0
 
     for e in expanded:
         d = e["denticity"]
-        charge = e["charge"]
-        total_charge += charge
+        total_charge += e["charge"]
         lig_names_out.append(e["name"])
 
         if d == 1:
-            # Direction vector from geometry
-            v = vecs[vec_idx % len(vecs)]
-            vec_idx += 1
+            v  = vecs[vec_idx % len(vecs)]
             bl = get_bond_length(metal, ox, e["donor_atom"], geom_canon)
-
-            # Get full ligand atom list (donor at origin, bulk along -x)
-            full_atoms = e["atoms"]   # list of (symbol, rel_pos)
-
-            # Build rotation: rotate ligand so bulk (-x) points AWAY from metal
-            # i.e. donor (+x direction from metal) aligns with v
-            # The donor is at origin in rel coords; metal is at +x*bl
-            # We need to rotate so that +x maps to v
-            R = _rodrigues_rotation(np.array([1., 0., 0.]), v)
-
-            for sym, rel_pos in full_atoms:
-                # donor is at origin → absolute position = metal_pos + R*(rel_pos) + v*bl
-                # But rel_pos already has donor at 0, so donor maps to v*bl exactly
-                abs_pos = R @ rel_pos + v * bl
-                mol_atoms.append(Atom(symbol=sym, position=abs_pos,
+            R  = _rodrigues_rotation(np.array([1., 0., 0.]), v)
+            for sym, rel in e["atoms"]:
+                mol_atoms.append(Atom(symbol=sym, position=R @ rel + v * bl,
                                       label=f"{sym}{len(mol_atoms)}"))
+            vec_idx += 1
 
         elif d == 2:
             v1 = vecs[vec_idx % len(vecs)]
             v2 = vecs[(vec_idx + 1) % len(vecs)]
             vec_idx += 2
-            donor_atoms_list = e["donor_atoms"]
-            d1 = donor_atoms_list[0]
-            d2 = donor_atoms_list[1] if len(donor_atoms_list) > 1 else donor_atoms_list[0]
+            d1, d2 = e["donor_atoms"][0], e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else e["donor_atoms"][0]
             bl1 = get_bond_length(metal, ox, d1, geom_canon)
             bl2 = get_bond_length(metal, ox, d2, geom_canon)
-
-            multi_atoms = get_ligand_atoms_multidentate(
-                e["name"], e["smiles"],
-                donor_atoms_list[:2], e.get("donors", [0, 1])[:2],
+            multi = get_ligand_atoms_multidentate(
+                e["name"], e["smiles"], e["donor_atoms"][:2],
+                e.get("donors", [0, 1])[:2],
                 bite_angle_deg=e["bite_angle"] or 90.0,
                 bond_lengths=[bl1, bl2],
             )
-            # multi_atoms are in a local frame with metal at origin, donors in xy-plane
-            # Rotate this frame so the midpoint direction aligns with (v1+v2)/2
-            mid = (v1 + v2)
-            if np.linalg.norm(mid) > 1e-6:
-                mid = mid / np.linalg.norm(mid)
-                R = _rodrigues_rotation(np.array([1., 0., 0.]), mid)
-                for sym, pos in multi_atoms:
-                    mol_atoms.append(Atom(symbol=sym, position=R @ pos,
-                                          label=f"{sym}{len(mol_atoms)}"))
-            else:
-                for sym, pos in multi_atoms:
-                    mol_atoms.append(Atom(symbol=sym, position=pos,
-                                          label=f"{sym}{len(mol_atoms)}"))
+            mid = v1 + v2
+            R = _rodrigues_rotation(np.array([1., 0., 0.]),
+                                    mid / np.linalg.norm(mid)) if np.linalg.norm(mid) > 1e-6 else np.eye(3)
+            for sym, pos in multi:
+                mol_atoms.append(Atom(symbol=sym, position=R @ pos,
+                                      label=f"{sym}{len(mol_atoms)}"))
 
         else:
-            # Tridentate or higher
-            donor_atoms_list = e["donor_atoms"]
-            bls = [get_bond_length(metal, ox, da, geom_canon) for da in donor_atoms_list]
-            multi_atoms = get_ligand_atoms_multidentate(
-                e["name"], e["smiles"],
-                donor_atoms_list, e.get("donors", list(range(len(donor_atoms_list)))),
+            d_list = e["donor_atoms"]
+            bls = [get_bond_length(metal, ox, da, geom_canon) for da in d_list]
+            multi = get_ligand_atoms_multidentate(
+                e["name"], e["smiles"], d_list,
+                e.get("donors", list(range(len(d_list)))),
                 bite_angle_deg=e["bite_angle"] or 90.0,
                 bond_lengths=bls,
             )
-            mid_vec = np.mean([vecs[(vec_idx + i) % len(vecs)] for i in range(d)], axis=0)
-            if np.linalg.norm(mid_vec) > 1e-6:
-                mid_vec /= np.linalg.norm(mid_vec)
-                R = _rodrigues_rotation(np.array([1., 0., 0.]), mid_vec)
-                for sym, pos in multi_atoms:
-                    mol_atoms.append(Atom(symbol=sym, position=R @ pos,
-                                          label=f"{sym}{len(mol_atoms)}"))
-            else:
-                for sym, pos in multi_atoms:
-                    mol_atoms.append(Atom(symbol=sym, position=pos,
-                                          label=f"{sym}{len(mol_atoms)}"))
+            mid_vecs = [vecs[(vec_idx + i) % len(vecs)] for i in range(d)]
+            mid = np.mean(mid_vecs, axis=0)
+            R = _rodrigues_rotation(np.array([1., 0., 0.]),
+                                    mid / np.linalg.norm(mid)) if np.linalg.norm(mid) > 1e-6 else np.eye(3)
+            for sym, pos in multi:
+                mol_atoms.append(Atom(symbol=sym, position=R @ pos,
+                                      label=f"{sym}{len(mol_atoms)}"))
             vec_idx += d
 
-    # ── build formula ─────────────────────────────────────────────────────
-    all_symbols = [a.symbol for a in mol_atoms]
-    formula = _make_formula(all_symbols)
-
-    spin_mult = spin if spin is not None else _spin_multiplicity(metal, ox, geom_canon)
-
-    mol = Molecule(
+    formula = _make_formula([a.symbol for a in mol_atoms])
+    spin_mult = spin if spin is not None else _spin_multiplicity(metal, ox)
+    return Molecule(
         atoms=mol_atoms,
         metal_indices=[0],
         formula=formula,
@@ -363,81 +358,106 @@ def build(metal: str,
         metal_ox=ox,
         ligand_names=lig_names_out,
     )
-    return mol
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# build_all_isomers()
-# ──────────────────────────────────────────────────────────────────────────────
+# ── public API ────────────────────────────────────────────────────────────────
 
-def build_all_isomers(metal: str,
-                      ox: int,
-                      ligands: Optional[List] = None,
-                      geometry: Optional[str] = None,
-                      spin: Optional[int] = None) -> List[dict]:
+def build(metal: str,
+          ox: int,
+          ligands: Optional[List] = None,
+          geometry: Optional[str] = None,
+          spin: Optional[int] = None):
     """
-    Build ALL symmetry-distinct isomers for a given metal + ligand set.
+    Build a mononuclear transition-metal complex.
 
-    Returns a list of dicts, one per isomer:
-        {
-            "molecule"  : Molecule,
-            "label"     : str,     e.g. "fac", "mer", "cis", "trans", "only"
-            "index"     : int,     0-based
-            "n_isomers" : int,
-        }
+    Automatically generates all symmetry-distinct isomers:
+      - One isomer  → returns a single Molecule
+      - Two or more → returns a list of Molecule objects
 
-    Example
+    Each Molecule in a multi-isomer result has a `.label` attribute
+    (e.g. "fac", "mer", "cis", "trans", "isomer-1").
+
+    Parameters
+    ----------
+    metal : str
+        Element symbol, e.g. "Ni"
+    ox : int
+        Oxidation state, e.g. 2
+    ligands : list
+        Ligand names, SMILES strings, or CustomLigand objects.
+        Denticity modes use colon notation: "HCOO:bi", "bpy:mono".
+    geometry : str, optional
+        Coordination geometry key (oct, sqp, tet, tbp, …).
+        Auto-inferred from coordination number if omitted.
+    spin : int, optional
+        Spin multiplicity. Auto-estimated from d-electron count if omitted.
+
+    Returns
     -------
-    >>> isomers = build_all_isomers("Fe", ox=3,
-    ...     ligands=["Cl","Cl","Cl","H2O","H2O","H2O"])
-    >>> for iso in isomers:
-    ...     print(iso["label"], iso["molecule"].formula)
-    fac Cl3FeH6O3
-    mer Cl3FeH6O3
+    Molecule  or  list[Molecule]
+
+    Examples
+    --------
+    # Single isomer → Molecule
+    mol = build("Ni", ox=2, ligands=["H2O"]*6)
+
+    # Two isomers → [Molecule, Molecule] with .label "fac" / "mer"
+    mols = build("Ni", ox=2, ligands=["HCOO","HCOO","H2O","H2O","H2O","H2O"])
+
+    # Bidentate formate (colon mode)
+    mol = build("Ni", ox=2, ligands=["HCOO:bi","HCOO:bi","H2O","H2O"])
+
+    # Custom POSCAR ligand
+    lig = load_ligand_from_poscar("myligand.POSCAR", donor_atom_indices=[0])
+    mol = build("Ni", ox=2, ligands=["H2O","H2O","H2O","H2O","H2O", lig])
     """
     if ligands is None:
         ligands = []
 
-    lig_strs = [str(l) for l in ligands]
+    lig_strs = []
+    has_custom = False
+    for l in ligands:
+        if isinstance(l, CustomLigand):
+            lig_strs.append(l.name)
+            has_custom = True
+        else:
+            lig_strs.append(str(l))
 
-    # Determine geometry from CN if not given
+    # Determine canonical geometry for isomer enumeration
     if geometry:
         geom_canon = resolve_geometry(geometry)
     else:
-        # Need CN: expand to count denticity
         cn = 0
         for lname in lig_strs:
             is_smiles = ("=" in lname or "#" in lname or
                          "(" in lname or "[" in lname)
             if not is_smiles:
                 try:
-                    lig = get_ligand(lname)
-                    cn += lig["denticity"]
+                    cn += get_ligand(lname)["denticity"]
                     continue
                 except KeyError:
                     pass
             cn += 1
         geom_canon = infer_geometry(cn) if cn > 0 else "oct"
 
-    isomer_list = enumerate_isomers(lig_strs, geom_canon)
-    n = len(isomer_list)
+    # Custom ligands can't be meaningfully permuted; skip isomer enumeration
+    if has_custom:
+        return _build_single(metal, ox, ligands, geom_canon, spin)
+
+    isomers = enumerate_isomers(lig_strs, geom_canon)
+
+    if len(isomers) == 1:
+        mol = _build_single(metal, ox, isomers[0]["site_assignment"], geom_canon, spin)
+        mol.label = isomers[0]["label"]
+        return mol
 
     results = []
-    for iso in isomer_list:
-        mol = build(metal, ox=ox, ligands=iso["site_assignment"],
-                    geometry=geom_canon, spin=spin)
-        results.append({
-            "molecule":  mol,
-            "label":     iso["label"],
-            "index":     iso["index"],
-            "n_isomers": n,
-        })
+    for iso in isomers:
+        mol = _build_single(metal, ox, iso["site_assignment"], geom_canon, spin)
+        mol.label = iso["label"]
+        results.append(mol)
     return results
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# dimer()
-# ──────────────────────────────────────────────────────────────────────────────
 
 def dimer(metal: str,
           ox: int,
@@ -454,22 +474,25 @@ def dimer(metal: str,
     ----------
     metal : str
     ox : int
-    terminal : list of str, optional
-        Terminal ligand names per metal center
-    bridge : str, optional
-        Bridging ligand name (e.g. "mu-Cl")
+    terminal : list of str
+        Terminal ligands per metal center.
+    bridge : str
+        Bridging ligand name, e.g. "mu-OH", "mu-HCOO".
     n : int
-        Number of bridging ligand units (default 2)
+        Number of bridging units (default 2).
     geometry : str, optional
     mm_bond : bool
-        Whether there is a metal–metal bond
+        Include a metal–metal bond.
     mm_distance : float, optional
-        M–M distance override (Å)
+        Override M–M distance (Å).
+
+    Returns
+    -------
+    Molecule
     """
     if terminal is None:
         terminal = []
 
-    # Determine M–M distance
     if mm_distance is not None:
         d_mm = mm_distance
     elif mm_bond:
@@ -477,11 +500,10 @@ def dimer(metal: str,
         r = COVALENT_RADII.get(metal, 1.5)
         d_mm = 2 * r + 0.1
     else:
-        # non-bonded dimer: estimate from bridge length
         if bridge:
             try:
-                bl = get_ligand(bridge.replace("mu-", ""))
-                donor = bl.get("donor_atoms", ["Cl"])[0]
+                bl_data = get_ligand(bridge.replace("mu-", ""))
+                donor = bl_data.get("donor_atoms", ["Cl"])[0]
             except KeyError:
                 donor = "Cl"
             bridge_bl = get_bond_length(metal, ox, donor, geometry or "oct")
@@ -489,44 +511,27 @@ def dimer(metal: str,
             bridge_bl = 2.5
         d_mm = 2 * bridge_bl + 0.5
 
-    # Build individual monomers and place them
-    terminal_plus_half_bridge = list(terminal)
-    if bridge:
-        for _ in range(n):
-            terminal_plus_half_bridge.append(bridge)
+    per_metal = list(terminal) + ([bridge] * n if bridge else [])
+    mol1 = _build_single(metal, ox, per_metal, geometry, None)
+    mol2 = _build_single(metal, ox, per_metal, geometry, None)
 
-    mol1 = build(metal, ox, terminal_plus_half_bridge, geometry)
-    mol2 = build(metal, ox, terminal_plus_half_bridge, geometry)
-
-    # Translate mol2 along x by d_mm
     offset = np.array([d_mm, 0., 0.])
     for a in mol2.atoms:
         a.position = a.position + offset
 
-    # Merge
-    n_atoms_m1 = len(mol1.atoms)
-    combined_atoms = mol1.atoms + mol2.atoms
-    total_charge = mol1.charge + mol2.charge
-    formula = _make_formula([a.symbol for a in combined_atoms])
-    spin = mol1.spin_multiplicity  # simple approximation
-
-    mol = Molecule(
-        atoms=combined_atoms,
-        metal_indices=[0, n_atoms_m1],
-        formula=formula,
-        charge=total_charge,
-        spin_multiplicity=spin,
+    combined = mol1.atoms + mol2.atoms
+    return Molecule(
+        atoms=combined,
+        metal_indices=[0, len(mol1.atoms)],
+        formula=_make_formula([a.symbol for a in combined]),
+        charge=mol1.charge + mol2.charge,
+        spin_multiplicity=mol1.spin_multiplicity,
         geometry=mol1.geometry,
         metal_symbol=metal,
         metal_ox=ox,
         ligand_names=mol1.ligand_names,
     )
-    return mol
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# trimer()
-# ──────────────────────────────────────────────────────────────────────────────
 
 def trimer(metal: str,
            ox: int,
@@ -537,73 +542,58 @@ def trimer(metal: str,
     """
     Build a trinuclear complex.
 
-    arrangement: 'triangular' or 'linear'
+    Parameters
+    ----------
+    arrangement : "triangular" or "linear"
     """
     if terminal is None:
         terminal = []
 
-    terminal_plus_bridge = list(terminal)
-    if bridge:
-        terminal_plus_bridge.append(bridge)
-        terminal_plus_bridge.append(bridge)
+    per_metal = list(terminal) + ([bridge, bridge] if bridge else [])
+    m1 = _build_single(metal, ox, per_metal, geometry, None)
 
-    m1 = build(metal, ox, terminal_plus_bridge, geometry)
-
-    # Estimate M–M distance
     bl_ref = 2.5
     if bridge:
         try:
-            bl_lig = get_ligand(bridge.replace("mu-", ""))
-            donor = bl_lig.get("donor_atoms", ["C"])[0]
+            bl_d = get_ligand(bridge.replace("mu-", ""))
+            donor = bl_d.get("donor_atoms", ["C"])[0]
             bl_ref = get_bond_length(metal, ox, donor, geometry or "oct")
         except KeyError:
             pass
     d_mm = 2 * bl_ref + 0.4
 
     if arrangement == "triangular":
-        offsets = [
-            np.array([0., 0., 0.]),
-            np.array([d_mm, 0., 0.]),
-            np.array([d_mm / 2, d_mm * np.sqrt(3) / 2, 0.]),
-        ]
-    else:  # linear
-        offsets = [
-            np.array([0., 0., 0.]),
-            np.array([d_mm, 0., 0.]),
-            np.array([2 * d_mm, 0., 0.]),
-        ]
+        offsets = [np.zeros(3),
+                   np.array([d_mm, 0., 0.]),
+                   np.array([d_mm / 2, d_mm * np.sqrt(3) / 2, 0.])]
+    else:
+        offsets = [np.zeros(3),
+                   np.array([d_mm, 0., 0.]),
+                   np.array([2 * d_mm, 0., 0.])]
 
-    all_atoms = []
-    metal_indices = []
-    n = 0
-    for k, off in enumerate(offsets):
-        mk = build(metal, ox, terminal_plus_bridge, geometry)
+    all_atoms, metal_indices, n = [], [], 0
+    for off in offsets:
+        mk = _build_single(metal, ox, per_metal, geometry, None)
         for a in mk.atoms:
             a.position = a.position + off
         metal_indices.append(n)
         all_atoms.extend(mk.atoms)
         n += len(mk.atoms)
 
-    total_charge = m1.charge * 3
-    formula = _make_formula([a.symbol for a in all_atoms])
-
-    mol = Molecule(
+    return Molecule(
         atoms=all_atoms,
         metal_indices=metal_indices,
-        formula=formula,
-        charge=total_charge,
+        formula=_make_formula([a.symbol for a in all_atoms]),
+        charge=m1.charge * 3,
         spin_multiplicity=m1.spin_multiplicity,
         geometry=m1.geometry,
         metal_symbol=metal,
         metal_ox=ox,
         ligand_names=m1.ligand_names,
     )
-    return mol
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# poscar(), xyz(), info()
-# ──────────────────────────────────────────────────────────────────────────────
+# ── file output ───────────────────────────────────────────────────────────────
 
 def poscar(mol: Molecule, filepath: str) -> None:
     """Write Molecule to a VASP POSCAR file."""
@@ -623,7 +613,8 @@ def xyz(mol: Molecule, filepath: str) -> None:
 
 def info(mol: Molecule) -> None:
     """Print a summary of the molecule."""
-    print(f"Formula          : {mol.formula}")
+    label = f"  [{getattr(mol, 'label', '')}]" if getattr(mol, 'label', '') not in ('', 'only') else ''
+    print(f"Formula          : {mol.formula}{label}")
     print(f"Total charge     : {mol.charge:+d}")
     print(f"Spin multiplicity: {mol.spin_multiplicity}")
     print(f"Metal            : {mol.metal_symbol}({mol.metal_ox:+d})")
