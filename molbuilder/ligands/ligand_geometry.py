@@ -14,6 +14,8 @@ from typing import List, Tuple, Optional
 try:
     from rdkit import Chem
     from rdkit.Chem import AllChem
+    from rdkit import RDLogger
+    RDLogger.DisableLog("rdApp.*")   # suppress all RDKit warnings globally
     _RDKIT = True
 except ImportError:
     _RDKIT = False
@@ -74,6 +76,46 @@ _FALLBACK_GEOMS = {
     "Br":  ("Br", [("Br", [0., 0., 0.])]),
     "I":   ("I",  [("I",  [0., 0., 0.])]),
     "F":   ("F",  [("F",  [0., 0., 0.])]),
+    # HCOO- (formate): O donor, C and second O pointing away
+    "HCOO": ("O", [
+        ("O", [0., 0., 0.]),
+        ("C", [-1.26, 0., 0.]),
+        ("O", [-1.89,  1.09, 0.]),
+        ("H", [-1.89, -1.09, 0.]),
+    ]),
+    "formate": ("O", [
+        ("O", [0., 0., 0.]),
+        ("C", [-1.26, 0., 0.]),
+        ("O", [-1.89,  1.09, 0.]),
+        ("H", [-1.89, -1.09, 0.]),
+    ]),
+    "HCOO:mono": ("O", [
+        ("O", [0., 0., 0.]),
+        ("C", [-1.26, 0., 0.]),
+        ("O", [-1.89,  1.09, 0.]),
+        ("H", [-1.89, -1.09, 0.]),
+    ]),
+    "mu-HCOO": ("O", [
+        ("O", [0., 0., 0.]),
+        ("C", [-1.26, 0., 0.]),
+        ("O", [-1.89,  1.09, 0.]),
+        ("H", [-1.89, -1.09, 0.]),
+    ]),
+    # HCOOH (formic acid)
+    "HCOOH": ("O", [
+        ("O", [0., 0., 0.]),
+        ("C", [-1.34, 0., 0.]),
+        ("O", [-1.97,  1.06, 0.]),
+        ("H", [-1.97, -1.06, 0.]),
+        ("H", [ 0.97, 0., 0.]),
+    ]),
+    "HCOOH:mono": ("O", [
+        ("O", [0., 0., 0.]),
+        ("C", [-1.34, 0., 0.]),
+        ("O", [-1.97,  1.06, 0.]),
+        ("H", [-1.97, -1.06, 0.]),
+        ("H", [ 0.97, 0., 0.]),
+    ]),
     # OH: O donor, one H at ~109° O-H = 0.96 Å
     "OH": ("O", [
         ("O", [0., 0., 0.]),
