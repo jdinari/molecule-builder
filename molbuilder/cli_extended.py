@@ -9,6 +9,7 @@ Extended CLI supporting:
 
 import argparse
 from pathlib import Path
+from molbuilder.api import build, build_all_isomers
 from molbuilder.api_extended import (
     build_with_custom_ligands,
     build_with_denticity_modes,
@@ -16,6 +17,7 @@ from molbuilder.api_extended import (
 )
 from molbuilder.ligands.custom_poscar import load_custom_ligand
 from molbuilder.output.poscar_writer import poscar_to_string
+from molbuilder.output.xyz_writer import xyz_to_string
 
 
 def setup_extended_cli_parser(parser: argparse.ArgumentParser):
@@ -166,9 +168,13 @@ def main_extended():
     parser.add_argument("--ox", type=int, required=True, help="Oxidation state")
     parser.add_argument("--ligands", nargs="*", help="Ligand names")
     parser.add_argument("--geometry", type=str, help="Coordination geometry")
-    parser.add_argument("--out", type=str, required=True, help="Output POSCAR file")
+    parser.add_argument("--out", type=str, required=True,
+                        help="Output POSCAR file. With --all-isomers, used as base name "
+                             "(e.g. Fe.POSCAR → Fe_fac.POSCAR, Fe_mer.POSCAR)")
     parser.add_argument("--print", action="store_true", dest="print_poscar",
                         help="Print POSCAR to stdout")
+    parser.add_argument("--all-isomers", action="store_true",
+                        help="Generate all symmetry-distinct isomers")
     parser.add_argument("--dimer", action="store_true", help="Build dimer")
     parser.add_argument("--n-metals", type=int, default=1, help="Number of metal centers")
     
@@ -193,6 +199,26 @@ def main_extended():
         bridge_ligs = parse_bridge_ligands(args.bridge_ligands)
         
         # Build complex
+        if args.all_isomers and not (args.dimer or bridge_ligs or custom_ligs or lig_modes):
+            isomers = build_all_isomers(
+                args.metal, ox=args.ox,
+                ligands=args.ligands or [],
+                geometry=args.geometry,
+            )
+            print(f"Found {len(isomers)} symmetry-distinct isomer(s).")
+            out = Path(args.out)
+            for iso in isomers:
+                mol = iso["molecule"]
+                label = iso["label"]
+                print(f"\n── Isomer: {label} ──")
+                poscar_str = poscar_to_string(mol)
+                if args.print_poscar:
+                    print(poscar_str)
+                iso_path = out.with_name(f"{out.stem}_{label}{out.suffix or '.POSCAR'}")
+                iso_path.write_text(poscar_str)
+                print(f"✓ Written to {iso_path}")
+            return
+
         if args.dimer or len(bridge_ligs) > 0:
             mol = dimer_with_bridging_ligands(
                 args.metal,

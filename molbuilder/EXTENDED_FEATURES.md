@@ -36,14 +36,14 @@ mol = build_with_custom_ligands(
 ### CLI
 
 ```bash
-python molbuilder/cli_extended.py \
+PYTHONPATH=. python molbuilder/cli_extended.py \
     --metal Fe --ox 2 \
     --ligands Cl Cl Cl Cl \
     --custom-ligand custom_ligand.POSCAR \
     --custom-donor-atoms 0,2 \
     --custom-ligand-charge 0 \
     --custom-ligand-name myligand \
-    --out Fe_complex.POSCAR
+    --out Fe_custom_ligand.POSCAR
 ```
 
 **Key Points:**
@@ -114,22 +114,22 @@ mol = build_with_denticity_modes(
 
 ```bash
 # Bidentate bipyridine
-python molbuilder/cli_extended.py \
+PYTHONPATH=. python molbuilder/cli_extended.py \
     --metal Fe --ox 2 \
     --ligand-mode bpy:bi \
     --ligand-mode Cl \
     --ligand-mode Cl \
     --geometry oct \
-    --out Fe_bpy2_Cl2.POSCAR
+    --out Fe_bpy2_Cl2_oct.POSCAR
 
 # Mixed monodentate and bidentate
-python molbuilder/cli_extended.py \
+PYTHONPATH=. python molbuilder/cli_extended.py \
     --metal Pd --ox 2 \
     --ligand-mode bpy:mono \
     --ligand-mode Cl \
     --ligand-mode Cl \
     --geometry sqp \
-    --out Pd_complex.POSCAR
+    --out Pd_bpy_mono_Cl2.POSCAR
 ```
 
 ---
@@ -166,23 +166,23 @@ mol = dimer_with_bridging_ligands(
 
 ```bash
 # [Fe2(μ-HCOO)2(H2O)4] dimer
-python molbuilder/cli_extended.py \
+PYTHONPATH=. python molbuilder/cli_extended.py \
     --dimer \
     --metal Fe --ox 3 \
     --ligands H2O H2O \
     --bridge-ligand HCOO:bi \
     --bridge-count 2 \
     --geometry oct \
-    --out Fe2_formate_dimer.POSCAR
+    --out Fe2_mu-HCOO2_H2O4.POSCAR
 
 # [Rh2(μ-OH)2(CO)2] dimer with M-M bond
-python molbuilder/cli_extended.py \
+PYTHONPATH=. python molbuilder/cli_extended.py \
     --dimer \
     --metal Rh --ox 1 \
     --ligands CO \
     --bridge-ligand OH:bridge \
     --bridge-count 2 \
-    --out Rh2_dimer.POSCAR
+    --out Rh2_mu-OH2_CO2.POSCAR
 ```
 
 ---

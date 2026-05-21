@@ -3,7 +3,7 @@ api.py
 ======
 Public API for molbuilder.
 
-  from molbuilder.api import build, dimer, trimer, poscar, xyz, info
+  from molbuilder.api import build, build_all_isomers, dimer, trimer, poscar, xyz, info
 """
 
 from __future__ import annotations
@@ -19,7 +19,9 @@ from molbuilder.core.geometry import (
     get_geometry_vectors, infer_geometry, resolve_geometry, list_geometries,
 )
 from molbuilder.core.bond_lengths import get_bond_length
+from molbuilder.core.isomers import enumerate_isomers
 from molbuilder.ligands.library import get_ligand, list_ligands
+from molbuilder.ligands.ligand_geometry import get_ligand_atoms, get_ligand_atoms_multidentate, _rodrigues_rotation
 from molbuilder.output.poscar_writer import poscar_to_string
 from molbuilder.output.xyz_writer import xyz_to_string
 
@@ -88,29 +90,38 @@ def _donor_from_smiles(smiles: str) -> str:
 
 def _expand_ligand(lig_name: str, metal: str, ox: int, geometry: str):
     """
-    Resolve a ligand name to a dict:
-        {atoms: [(symbol, rel_pos), ...], donor_atom: str,
-         charge: int, denticity: int, bite_angle: float|None,
-         vectors_count: int}
-    rel_pos are RELATIVE positions w.r.t. the metal (before placing).
+    Resolve a ligand name to a dict carrying full 3D geometry (including H).
+    
+    Returns dict with keys:
+      atoms         – list of (symbol, rel_pos) relative to donor at origin,
+                      ligand bulk pointing along -x (metal will be at +x)
+      donor_atom    – element symbol of primary donor
+      donor_atoms   – list of all donor element symbols
+      smiles        – SMILES string
+      charge        – formal charge
+      denticity     – number of donor atoms
+      bite_angle    – chelate bite angle (deg), or None
+      vectors_count – number of geometry vectors consumed
+      name          – ligand name string
     """
-    # Allow passing raw SMILES (contains = or # or parentheses, or not a known name)
+    # Detect raw SMILES
     is_smiles = ("=" in lig_name or "#" in lig_name or
                  "(" in lig_name or "[" in lig_name or
                  "." in lig_name)
     if not is_smiles:
         try:
             lig = get_ligand(lig_name)
-            is_smiles = False
         except KeyError:
             is_smiles = True
 
     if is_smiles:
         donor = _donor_from_smiles(lig_name)
-        bl = get_bond_length(metal, ox, donor, geometry)
+        full_atoms = get_ligand_atoms(lig_name, lig_name, donor, 0)
         return {
-            "atoms": [(donor, np.array([bl, 0., 0.]))],
+            "atoms": full_atoms,
             "donor_atom": donor,
+            "donor_atoms": [donor],
+            "smiles": lig_name,
             "charge": 0,
             "denticity": 1,
             "bite_angle": None,
@@ -120,15 +131,19 @@ def _expand_ligand(lig_name: str, metal: str, ox: int, geometry: str):
 
     lig = get_ligand(lig_name)
     donor_atoms = lig.get("donor_atoms", ["N"])
-    bl_list = [get_bond_length(metal, ox, d, geometry) for d in donor_atoms]
+    smiles = lig.get("smiles", "")
+    donor_indices = lig.get("donors", [0])
 
-    # For monodentate: simple single-atom placeholder
     if lig["denticity"] == 1:
-        d_atom = donor_atoms[0]
-        bl = bl_list[0]
+        # Full geometry: donor at origin, bulk along -x
+        full_atoms = get_ligand_atoms(lig_name, smiles, donor_atoms[0],
+                                      donor_indices[0] if donor_indices else 0)
         return {
-            "atoms": [(d_atom, np.array([bl, 0., 0.]))],
-            "donor_atom": d_atom,
+            "atoms": full_atoms,
+            "donor_atom": donor_atoms[0],
+            "donor_atoms": donor_atoms,
+            "donors": donor_indices,
+            "smiles": smiles,
             "charge": lig["charge"],
             "denticity": 1,
             "bite_angle": None,
@@ -136,15 +151,14 @@ def _expand_ligand(lig_name: str, metal: str, ox: int, geometry: str):
             "name": lig_name,
         }
 
-    # Multidentate: donor atoms placed in a plane with the bite angle
+    # Multidentate
     bite = lig.get("bite_angle", 90.0)
-    result_atoms = []
-    for i, (d_atom, bl) in enumerate(zip(donor_atoms, bl_list)):
-        result_atoms.append((d_atom, np.array([bl, 0., 0.])))  # placeholder; rotated later
-
     return {
-        "atoms": result_atoms,
+        "atoms": [],          # filled in during placement using get_ligand_atoms_multidentate
         "donor_atom": donor_atoms[0],
+        "donor_atoms": donor_atoms,
+        "donors": donor_indices,
+        "smiles": smiles,
         "charge": lig["charge"],
         "denticity": lig["denticity"],
         "bite_angle": bite,
@@ -253,38 +267,83 @@ def build(metal: str,
 
     for e in expanded:
         d = e["denticity"]
-        donor_atoms_list = [at[0] for at in e["atoms"]]
         charge = e["charge"]
         total_charge += charge
         lig_names_out.append(e["name"])
 
         if d == 1:
+            # Direction vector from geometry
             v = vecs[vec_idx % len(vecs)]
             vec_idx += 1
-            bl = get_bond_length(metal, ox, donor_atoms_list[0], geom_canon)
-            mol_atoms.append(Atom(
-                symbol=donor_atoms_list[0],
-                position=v * bl,
-                label=f"{donor_atoms_list[0]}{vec_idx}",
-            ))
+            bl = get_bond_length(metal, ox, e["donor_atom"], geom_canon)
+
+            # Get full ligand atom list (donor at origin, bulk along -x)
+            full_atoms = e["atoms"]   # list of (symbol, rel_pos)
+
+            # Build rotation: rotate ligand so bulk (-x) points AWAY from metal
+            # i.e. donor (+x direction from metal) aligns with v
+            # The donor is at origin in rel coords; metal is at +x*bl
+            # We need to rotate so that +x maps to v
+            R = _rodrigues_rotation(np.array([1., 0., 0.]), v)
+
+            for sym, rel_pos in full_atoms:
+                # donor is at origin → absolute position = metal_pos + R*(rel_pos) + v*bl
+                # But rel_pos already has donor at 0, so donor maps to v*bl exactly
+                abs_pos = R @ rel_pos + v * bl
+                mol_atoms.append(Atom(symbol=sym, position=abs_pos,
+                                      label=f"{sym}{len(mol_atoms)}"))
 
         elif d == 2:
             v1 = vecs[vec_idx % len(vecs)]
             v2 = vecs[(vec_idx + 1) % len(vecs)]
             vec_idx += 2
-            placed = _place_bidentate(v1, v2,
-                                      donor_atoms_list[0],
-                                      donor_atoms_list[1] if len(donor_atoms_list) > 1 else donor_atoms_list[0],
-                                      metal, ox, geom_canon)
-            for sym, pos in placed:
-                mol_atoms.append(Atom(symbol=sym, position=pos, label=f"{sym}{len(mol_atoms)}"))
+            donor_atoms_list = e["donor_atoms"]
+            d1 = donor_atoms_list[0]
+            d2 = donor_atoms_list[1] if len(donor_atoms_list) > 1 else donor_atoms_list[0]
+            bl1 = get_bond_length(metal, ox, d1, geom_canon)
+            bl2 = get_bond_length(metal, ox, d2, geom_canon)
+
+            multi_atoms = get_ligand_atoms_multidentate(
+                e["name"], e["smiles"],
+                donor_atoms_list[:2], e.get("donors", [0, 1])[:2],
+                bite_angle_deg=e["bite_angle"] or 90.0,
+                bond_lengths=[bl1, bl2],
+            )
+            # multi_atoms are in a local frame with metal at origin, donors in xy-plane
+            # Rotate this frame so the midpoint direction aligns with (v1+v2)/2
+            mid = (v1 + v2)
+            if np.linalg.norm(mid) > 1e-6:
+                mid = mid / np.linalg.norm(mid)
+                R = _rodrigues_rotation(np.array([1., 0., 0.]), mid)
+                for sym, pos in multi_atoms:
+                    mol_atoms.append(Atom(symbol=sym, position=R @ pos,
+                                          label=f"{sym}{len(mol_atoms)}"))
+            else:
+                for sym, pos in multi_atoms:
+                    mol_atoms.append(Atom(symbol=sym, position=pos,
+                                          label=f"{sym}{len(mol_atoms)}"))
 
         else:
-            # Tridentate or higher: just place each donor at successive geometry vectors
-            for i, sym in enumerate(donor_atoms_list):
-                v = vecs[(vec_idx + i) % len(vecs)]
-                bl = get_bond_length(metal, ox, sym, geom_canon)
-                mol_atoms.append(Atom(symbol=sym, position=v * bl, label=f"{sym}{len(mol_atoms)}"))
+            # Tridentate or higher
+            donor_atoms_list = e["donor_atoms"]
+            bls = [get_bond_length(metal, ox, da, geom_canon) for da in donor_atoms_list]
+            multi_atoms = get_ligand_atoms_multidentate(
+                e["name"], e["smiles"],
+                donor_atoms_list, e.get("donors", list(range(len(donor_atoms_list)))),
+                bite_angle_deg=e["bite_angle"] or 90.0,
+                bond_lengths=bls,
+            )
+            mid_vec = np.mean([vecs[(vec_idx + i) % len(vecs)] for i in range(d)], axis=0)
+            if np.linalg.norm(mid_vec) > 1e-6:
+                mid_vec /= np.linalg.norm(mid_vec)
+                R = _rodrigues_rotation(np.array([1., 0., 0.]), mid_vec)
+                for sym, pos in multi_atoms:
+                    mol_atoms.append(Atom(symbol=sym, position=R @ pos,
+                                          label=f"{sym}{len(mol_atoms)}"))
+            else:
+                for sym, pos in multi_atoms:
+                    mol_atoms.append(Atom(symbol=sym, position=pos,
+                                          label=f"{sym}{len(mol_atoms)}"))
             vec_idx += d
 
     # ── build formula ─────────────────────────────────────────────────────
@@ -305,6 +364,75 @@ def build(metal: str,
         ligand_names=lig_names_out,
     )
     return mol
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# build_all_isomers()
+# ──────────────────────────────────────────────────────────────────────────────
+
+def build_all_isomers(metal: str,
+                      ox: int,
+                      ligands: Optional[List] = None,
+                      geometry: Optional[str] = None,
+                      spin: Optional[int] = None) -> List[dict]:
+    """
+    Build ALL symmetry-distinct isomers for a given metal + ligand set.
+
+    Returns a list of dicts, one per isomer:
+        {
+            "molecule"  : Molecule,
+            "label"     : str,     e.g. "fac", "mer", "cis", "trans", "only"
+            "index"     : int,     0-based
+            "n_isomers" : int,
+        }
+
+    Example
+    -------
+    >>> isomers = build_all_isomers("Fe", ox=3,
+    ...     ligands=["Cl","Cl","Cl","H2O","H2O","H2O"])
+    >>> for iso in isomers:
+    ...     print(iso["label"], iso["molecule"].formula)
+    fac Cl3FeH6O3
+    mer Cl3FeH6O3
+    """
+    if ligands is None:
+        ligands = []
+
+    lig_strs = [str(l) for l in ligands]
+
+    # Determine geometry from CN if not given
+    if geometry:
+        geom_canon = resolve_geometry(geometry)
+    else:
+        # Need CN: expand to count denticity
+        cn = 0
+        for lname in lig_strs:
+            is_smiles = ("=" in lname or "#" in lname or
+                         "(" in lname or "[" in lname)
+            if not is_smiles:
+                try:
+                    lig = get_ligand(lname)
+                    cn += lig["denticity"]
+                    continue
+                except KeyError:
+                    pass
+            cn += 1
+        geom_canon = infer_geometry(cn) if cn > 0 else "oct"
+
+    isomer_list = enumerate_isomers(lig_strs, geom_canon)
+    n = len(isomer_list)
+
+    results = []
+    for iso in isomer_list:
+        mol = build(metal, ox=ox, ligands=iso["site_assignment"],
+                    geometry=geom_canon, spin=spin)
+        results.append({
+            "molecule":  mol,
+            "label":     iso["label"],
+            "index":     iso["index"],
+            "n_isomers": n,
+        })
+    return results
 
 
 # ──────────────────────────────────────────────────────────────────────────────
