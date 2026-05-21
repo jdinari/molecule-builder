@@ -28,8 +28,8 @@ from molbuilder.core.bond_lengths import get_bond_length
 from molbuilder.core.isomers import enumerate_isomers
 from molbuilder.ligands.library import get_ligand, list_ligands
 from molbuilder.ligands.ligand_geometry import (
-    get_ligand_atoms, get_ligand_atoms_multidentate, _rodrigues_rotation,
-    check_clashes, resolve_clash_by_rotation, _clash_score,
+    place_ligand, get_ligand_atoms, get_ligand_atoms_multidentate,
+    _rodrigues_rotation, check_clashes, resolve_clash_by_rotation, _clash_score,
 )
 from molbuilder.output.poscar_writer import poscar_to_string
 from molbuilder.output.xyz_writer import xyz_to_string
@@ -213,9 +213,8 @@ def _expand_ligand(lig, metal: str, ox: int, geometry: str) -> dict:
 
     if is_smiles:
         donor = _donor_from_smiles(lig_name)
-        full_atoms = get_ligand_atoms(lig_name, lig_name, donor, 0)
         return {
-            "atoms": full_atoms,
+            "atoms": [],
             "donor_atom": donor,
             "donor_atoms": [donor],
             "donors": [0],
@@ -234,10 +233,8 @@ def _expand_ligand(lig, metal: str, ox: int, geometry: str) -> dict:
     donor_indices = lig_data.get("donors", [0])
 
     if lig_data["denticity"] == 1:
-        full_atoms = get_ligand_atoms(lig_name, smiles, donor_atoms[0],
-                                      donor_indices[0] if donor_indices else 0)
         return {
-            "atoms": full_atoms,
+            "atoms": [],          # not used; place_ligand() handles geometry
             "donor_atom": donor_atoms[0],
             "donor_atoms": donor_atoms,
             "donors": donor_indices,
@@ -302,17 +299,20 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
         if d == 1:
             v  = vecs[vec_idx % len(vecs)]
             bl = get_bond_length(metal, ox, e["donor_atom"], geom_canon)
-            R  = _rodrigues_rotation(np.array([1., 0., 0.]), v)
+            donor_abs  = v * bl
+            metal_abs  = np.zeros(3)
 
-            # Place ligand atoms in absolute frame
-            placed = [(sym, R @ rel + v * bl) for sym, rel in e["atoms"]]
+            # All other coordination sites (for torsion optimisation)
+            remaining_vecs = [vecs[(vec_idx + k) % len(vecs)] * bl
+                              for k in range(1, cn - vec_idx)]
+            # Also include already-placed donor atoms
+            already_placed = [a.position for a in mol_atoms
+                              if a.symbol not in ('H',) and a.symbol != metal]
 
-            # Resolve clashes against all already-placed atoms (including metal)
-            existing = [(a.symbol, a.position) for a in mol_atoms]
-            if check_clashes(placed, existing):
-                donor_abs = v * bl
-                metal_pos = mol_atoms[0].position  # metal is always atom 0
-                placed = resolve_clash_by_rotation(placed, donor_abs, metal_pos, existing)
+            adjacent = remaining_vecs + already_placed
+
+            # Place the full ligand with optimal torsion
+            placed = place_ligand(e["name"], donor_abs, metal_abs, adjacent)
 
             for sym, abs_pos in placed:
                 mol_atoms.append(Atom(symbol=sym, position=abs_pos,
@@ -359,89 +359,6 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
 
     formula = _make_formula([a.symbol for a in mol_atoms])
     spin_mult = spin if spin is not None else _spin_multiplicity(metal, ox)
-
-    # ── post-placement clash resolution ───────────────────────────────────────
-    # Rotate each non-trivial ligand (those with >1 atom) around its M→donor
-    # axis to minimize clashes with all other atoms. Run multiple passes until
-    # stable (adjacent ligands can affect each other).
-    metal_pos = mol_atoms[0].position
-
-    # Build a map: which atoms belong to which ligand (by index ranges)
-    # mol_atoms[0] = metal; then ligands in order
-    ligand_slices = []   # list of (donor_abs_pos, [atom_indices])
-    atom_idx = 1
-    for e in expanded:
-        n = len(e["atoms"]) if e["denticity"] == 1 else None
-        # count atoms actually added for this ligand
-        # We stored them consecutively; count from the placement loop
-        # Simpler: rebuild the slice sizes from the placed atom counts
-        ligand_slices.append(atom_idx)
-        if e["denticity"] == 1:
-            atom_idx += len(e["atoms"])
-        elif e["denticity"] == 2:
-            # multidentate: count atoms from get_ligand_atoms_multidentate
-            # We don't know exactly without re-running; skip multidentate for now
-            atom_idx += 2  # approximate: just donors
-        else:
-            atom_idx += e["denticity"]
-
-    # Rebuild ligand_groups properly by scanning the atom list
-    ligand_groups = []
-    idx = 1
-    for e in expanded:
-        if e["denticity"] == 1:
-            n_atoms = len(e["atoms"])
-            ligand_groups.append({
-                "indices": list(range(idx, idx + n_atoms)),
-                "donor_idx": idx,          # first atom is the donor
-                "has_tail": n_atoms > 1,
-            })
-            idx += n_atoms
-        else:
-            # multidentate: just skip for now
-            n_atoms = e["denticity"]
-            ligand_groups.append({
-                "indices": list(range(idx, idx + n_atoms)),
-                "donor_idx": idx,
-                "has_tail": False,
-            })
-            idx += n_atoms
-        if idx >= len(mol_atoms):
-            break
-
-    # Run up to 3 passes of rotation optimisation for ligands with tails
-    for _pass in range(3):
-        improved = False
-        for g in ligand_groups:
-            if not g["has_tail"]:
-                continue
-            indices   = g["indices"]
-            donor_abs = mol_atoms[g["donor_idx"]].position
-
-            # Collect current positions of this ligand
-            lig_atoms = [(mol_atoms[i].symbol, mol_atoms[i].position) for i in indices]
-
-            # All other atoms (not this ligand, not metal)
-            other_atoms = [(mol_atoms[i].symbol, mol_atoms[i].position)
-                           for i in range(len(mol_atoms)) if i not in indices]
-
-            current_score = _clash_score(lig_atoms, other_atoms)
-            if current_score == 0:
-                continue
-
-            # Find best rotation
-            best_lig = resolve_clash_by_rotation(
-                lig_atoms, donor_abs, metal_pos, other_atoms, n_steps=72
-            )
-            best_score = _clash_score(best_lig, other_atoms)
-
-            if best_score < current_score:
-                for k, i in enumerate(indices):
-                    mol_atoms[i].position = best_lig[k][1]
-                improved = True
-
-        if not improved:
-            break
 
     return Molecule(
         atoms=mol_atoms,
