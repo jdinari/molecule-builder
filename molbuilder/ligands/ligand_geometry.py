@@ -1,588 +1,627 @@
 """
 ligand_geometry.py
 ==================
-Generate full 3D geometry for ligands (including H atoms) using RDKit.
-Donor atom is placed at origin; bulk of ligand points along -x so that
-when the metal is at +x the ligand points away from it.
+Place ligand atoms in 3D given:
+  - The donor atom's absolute position
+  - The metal's absolute position
+  - The ligand's internal geometry (bond lengths, angles, torsions)
+
+Convention
+----------
+All ligands are defined as trees rooted at the donor atom.
+The M-donor-C angle determines where the first non-donor atom goes.
+The torsion around the M-donor axis is optimised to point the ligand
+bulk into the largest gap between adjacent coordination sites.
+
+This eliminates the "bulk along -x" local-frame approach that caused
+the C atom to end up too close to the metal.
 """
 
 from __future__ import annotations
 import numpy as np
 from typing import List, Tuple, Optional
 
-# ── RDKit import (optional but strongly preferred) ───────────────────────────
+# ── RDKit (optional) ─────────────────────────────────────────────────────────
 try:
     from rdkit import Chem
     from rdkit.Chem import AllChem
     from rdkit import RDLogger
-    RDLogger.DisableLog("rdApp.*")   # suppress all RDKit warnings globally
+    RDLogger.DisableLog("rdApp.*")
     _RDKIT = True
 except ImportError:
     _RDKIT = False
 
-# ── Fallback: hard-coded geometries for common ligands ───────────────────────
-# Convention: donor atom at origin, +x points TOWARD the metal,
-# so ligand bulk extends into the -x half-space.
+
+# ── Ligand internal geometry definitions ─────────────────────────────────────
+# Each entry defines the tree of atoms from the donor outward.
+# Format:
+#   "NAME": {
+#       "donor": element of donor atom,
+#       "mdc_angle": M-donor-C angle in degrees (angle at donor between metal and next atom)
+#       "atoms": list of (symbol, bond_length, parent_index, angle_from_parent_bond, dihedral_from_grandparent)
+#                parent_index is into the atoms list (0 = donor)
+#                angle_from_parent_bond = bond angle at the parent atom (degrees)
+#                dihedral = dihedral angle (degrees); None = free (optimised)
+#   }
 #
-# All bond lengths and angles are from standard experimental values:
-#   O-H = 0.957 Å, H-O-H = 104.5°
-#   N-H = 1.012 Å, H-N-H = 107.8°
-#   P-H = 1.420 Å, H-P-H = 93.5°
-#   O-H (hydroxide) = 0.960 Å, M-O-H ≈ 120°
-#   C=O (formate/CO) = 1.128/1.250 Å,  C-O = 1.260 Å
+# The donor is atom 0.  The first child's placement uses mdc_angle.
+# Free dihedrals (None) are optimised to maximise distance from adjacent donors.
 
-_FALLBACK_GEOMS = {
-    # ── water: H-O-H = 104.5°, O-H = 0.957 Å ────────────────────────────────
-    # H at ±52.25° from -x axis in xy-plane
-    "H2O": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("H", [-0.586,  0.757,  0.000]),
-        ("H", [-0.586, -0.757,  0.000]),
-    ]),
-    "aqua": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("H", [-0.586,  0.757,  0.000]),
-        ("H", [-0.586, -0.757,  0.000]),
-    ]),
+_LIGAND_DEFS = {
 
-    # ── ammonia: H-N-H = 107.8°, N-H = 1.012 Å, trigonal pyramid ─────────────
-    # cone half-angle from -x = 68.91°; 3 H at 120° apart around -x axis
-    "NH3": ("N", [
-        ("N", [ 0.000,  0.000,  0.000]),
-        ("H", [-0.364,  0.944,  0.000]),
-        ("H", [-0.364, -0.472,  0.818]),
-        ("H", [-0.364, -0.472, -0.818]),
-    ]),
-    "ammine": ("N", [
-        ("N", [ 0.000,  0.000,  0.000]),
-        ("H", [-0.364,  0.944,  0.000]),
-        ("H", [-0.364, -0.472,  0.818]),
-        ("H", [-0.364, -0.472, -0.818]),
-    ]),
+    # ── Water: O-H = 0.957 Å, H-O-H = 104.5° ─────────────────────────────────
+    # M-O-H angle: same as H-O-H bisector, ~127.75° from M
+    # Both H atoms are free torsion (placed symmetrically)
+    "H2O": {
+        "donor": "O",
+        "mdc_angle": 127.75,   # M-O-(bisector of H2)
+        "atoms": [
+            # (symbol, bond, parent_idx, angle_at_parent, dihedral)
+            ("O",  0.000, None,  None,   None),   # 0: donor
+            ("H",  0.957,    0,  127.75, None),   # 1: first H,  free torsion
+            ("H",  0.957,    0,  127.75, 180.0),  # 2: second H, opposite torsion
+        ],
+        "h_oh_angle": 104.5,   # stored for reference
+    },
+    "aqua": None,   # alias, handled below
 
-    # ── hydroxide: O-H = 0.960 Å, M-O-H ≈ 120° (sp3-like) ───────────────────
-    "OH": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("H", [-0.480,  0.831,  0.000]),
-    ]),
-    "mu-OH": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("H", [-0.480,  0.831,  0.000]),
-    ]),
+    # ── Ammonia: N-H = 1.012 Å, H-N-H = 107.8° ───────────────────────────────
+    "NH3": {
+        "donor": "N",
+        "mdc_angle": 111.5,   # M-N-H angle (tetrahedral-like)
+        "atoms": [
+            ("N",  0.000, None,  None,   None),
+            ("H",  1.012,    0,  111.5,  None),
+            ("H",  1.012,    0,  111.5,  120.0),
+            ("H",  1.012,    0,  111.5,  240.0),
+        ],
+    },
+    "ammine": None,
 
-    # ── phosphine: H-P-H = 93.5°, P-H = 1.420 Å ─────────────────────────────
-    # cone half-angle from -x = 57.25°
-    "PH3": ("P", [
-        ("P", [ 0.000,  0.000,  0.000]),
-        ("H", [-0.768,  1.194,  0.000]),
-        ("H", [-0.768, -0.597,  1.034]),
-        ("H", [-0.768, -0.597, -1.034]),
-    ]),
+    # ── Hydroxide: O-H = 0.960 Å, M-O-H = 120° ───────────────────────────────
+    "OH": {
+        "donor": "O",
+        "mdc_angle": 120.0,
+        "atoms": [
+            ("O",  0.000, None,  None,   None),
+            ("H",  0.960,    0,  120.0,  None),
+        ],
+    },
+    "mu-OH": None,
 
-    # ── carbon monoxide: C donor, O at -1.128 Å ──────────────────────────────
-    "CO": ("C", [
-        ("C", [ 0.000,  0.000,  0.000]),
-        ("O", [-1.128,  0.000,  0.000]),
-    ]),
+    # ── Formate HCOO-: monodentate through carboxylate O ─────────────────────
+    # M-O-C = 120° (sp2 O); formate is planar; torsion free
+    # Atoms: O(donor), C, O2, H
+    "HCOO": {
+        "donor": "O",
+        "mdc_angle": 120.0,   # M-O-C angle
+        "atoms": [
+            ("O",  0.000, None, None,   None),   # 0: donor O
+            ("C",  1.270,    0, 120.0,  None),   # 1: C, free torsion around M-O
+            ("O",  1.250,    1, 120.0,  0.0),    # 2: C=O (other O), syn to donor O
+            ("H",  1.090,    1, 120.0,  180.0),  # 3: H on C, anti to donor O
+        ],
+    },
+    "formate":   None,
+    "HCOO:mono": None,
+    "HCOO:bridge": None,
+    "mu-HCOO":   None,
 
-    # ── cyanide: C donor ──────────────────────────────────────────────────────
-    "CN": ("C", [
-        ("C", [ 0.000,  0.000,  0.000]),
-        ("N", [-1.160,  0.000,  0.000]),
-    ]),
+    # ── Formic acid HCOOH: coordinates through carbonyl O (C=O) ───────────────
+    # M-O=C = 125°; O-H points away
+    "HCOOH": {
+        "donor": "O",
+        "mdc_angle": 125.0,   # M-O=C angle at carbonyl O
+        "atoms": [
+            ("O",  0.000, None, None,   None),   # 0: carbonyl O (donor)
+            ("C",  1.200,    0, 125.0,  None),   # 1: C, free torsion
+            ("O",  1.340,    1, 124.0,  0.0),    # 2: hydroxyl O, syn to donor O
+            ("H",  1.090,    1, 116.0,  180.0),  # 3: formyl H, anti to donor O
+            ("H",  0.972,    2, 109.5,  180.0),  # 4: hydroxyl H, away from C
+        ],
+    },
+    "HCOOH:mono": None,
 
-    # ── nitric oxide: N donor ─────────────────────────────────────────────────
-    "NO": ("N", [
-        ("N", [ 0.000,  0.000,  0.000]),
-        ("O", [-1.150,  0.000,  0.000]),
-    ]),
+    # ── Carbon monoxide: C donor, linear ──────────────────────────────────────
+    "CO": {
+        "donor": "C",
+        "mdc_angle": 180.0,
+        "atoms": [
+            ("C",  0.000, None, None,   None),
+            ("O",  1.128,    0, 180.0,  None),
+        ],
+    },
 
-    # ── halides: single atom ──────────────────────────────────────────────────
-    "Cl":  ("Cl", [("Cl", [0., 0., 0.])]),
-    "Br":  ("Br", [("Br", [0., 0., 0.])]),
-    "I":   ("I",  [("I",  [0., 0., 0.])]),
-    "F":   ("F",  [("F",  [0., 0., 0.])]),
+    # ── Cyanide: C donor ──────────────────────────────────────────────────────
+    "CN": {
+        "donor": "C",
+        "mdc_angle": 180.0,
+        "atoms": [
+            ("C",  0.000, None, None,   None),
+            ("N",  1.160,    0, 180.0,  None),
+        ],
+    },
 
-    # ── formate HCOO-: O donor ────────────────────────────────────────────────
-    # M-O-C angle = 120° (sp2 carboxylate oxygen).
-    # Tail (C, O2, H) placed in the xz plane so adjacent-site clashes are
-    # resolvable by rotation around the M→donor axis.
-    # O-C = 1.26 Å, C=O = 1.25 Å, C-H = 1.09 Å
-    "HCOO": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("C", [-0.630,  0.000,  1.091]),
-        ("O", [-0.005,  0.000,  2.174]),
-        ("H", [-1.720,  0.000,  1.091]),
-    ]),
-    "formate": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("C", [-0.630,  0.000,  1.091]),
-        ("O", [-0.005,  0.000,  2.174]),
-        ("H", [-1.720,  0.000,  1.091]),
-    ]),
-    "HCOO:mono": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("C", [-0.630,  0.000,  1.091]),
-        ("O", [-0.005,  0.000,  2.174]),
-        ("H", [-1.720,  0.000,  1.091]),
-    ]),
-    "HCOO:bridge": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("C", [-0.630,  0.000,  1.091]),
-        ("O", [-0.005,  0.000,  2.174]),
-        ("H", [-1.720,  0.000,  1.091]),
-    ]),
-    "mu-HCOO": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("C", [-0.630,  0.000,  1.091]),
-        ("O", [-0.005,  0.000,  2.174]),
-        ("H", [-1.720,  0.000,  1.091]),
-    ]),
+    # ── Nitric oxide: N donor, linear ─────────────────────────────────────────
+    "NO": {
+        "donor": "N",
+        "mdc_angle": 180.0,
+        "atoms": [
+            ("N",  0.000, None, None,   None),
+            ("O",  1.150,    0, 180.0,  None),
+        ],
+    },
 
-    # ── formic acid HCOOH: carbonyl O donor (C=O oxygen) ─────────────────────
-    # M-O=C angle = 125°. Tail in xz plane for rotation-resolvable clashes.
-    # C=O = 1.20 Å, C-O(H) = 1.34 Å, O=C-O(H) = 124°, C-H = 1.09 Å, O-H = 0.972 Å
-    "HCOOH": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),   # carbonyl O — donor
-        ("C", [-0.688,  0.000,  0.983]),
-        ("O", [-0.208,  0.000,  2.234]),   # hydroxyl O
-        ("H", [-1.765,  0.000,  0.812]),   # formyl H on C
-        ("H", [ 0.764,  0.000,  2.209]),   # hydroxyl H
-    ]),
-    "HCOOH:mono": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("C", [-0.688,  0.000,  0.983]),
-        ("O", [-0.208,  0.000,  2.234]),
-        ("H", [-1.765,  0.000,  0.812]),
-        ("H", [ 0.764,  0.000,  2.209]),
-    ]),
+    # ── Halides: single atom ───────────────────────────────────────────────────
+    "Cl":  {"donor": "Cl", "mdc_angle": None, "atoms": [("Cl", 0.000, None, None, None)]},
+    "Br":  {"donor": "Br", "mdc_angle": None, "atoms": [("Br", 0.000, None, None, None)]},
+    "I":   {"donor": "I",  "mdc_angle": None, "atoms": [("I",  0.000, None, None, None)]},
+    "F":   {"donor": "F",  "mdc_angle": None, "atoms": [("F",  0.000, None, None, None)]},
 
-    # ── hydride ───────────────────────────────────────────────────────────────
-    "H":       ("H", [("H", [0., 0., 0.])]),
-    "hydride": ("H", [("H", [0., 0., 0.])]),
+    # ── Hydride / oxide: single atom ──────────────────────────────────────────
+    "H":       {"donor": "H", "mdc_angle": None, "atoms": [("H", 0.000, None, None, None)]},
+    "hydride": None,
+    "O":       {"donor": "O", "mdc_angle": None, "atoms": [("O", 0.000, None, None, None)]},
+    "O2-":     None,
 
-    # ── thiocyanate: S donor or N donor ──────────────────────────────────────
-    "SCN": ("S", [
-        ("S", [ 0.000,  0.000,  0.000]),
-        ("C", [-1.620,  0.000,  0.000]),
-        ("N", [-2.780,  0.000,  0.000]),
-    ]),
-    "NCS": ("N", [
-        ("N", [ 0.000,  0.000,  0.000]),
-        ("C", [-1.160,  0.000,  0.000]),
-        ("S", [-2.780,  0.000,  0.000]),
-    ]),
+    # ── Thiocyanate / isothiocyanate: linear ──────────────────────────────────
+    "SCN": {
+        "donor": "S",
+        "mdc_angle": 180.0,
+        "atoms": [
+            ("S", 0.000, None, None,   None),
+            ("C", 1.620,    0, 180.0,  None),
+            ("N", 1.160,    1, 180.0,  None),
+        ],
+    },
+    "NCS": {
+        "donor": "N",
+        "mdc_angle": 180.0,
+        "atoms": [
+            ("N", 0.000, None, None,   None),
+            ("C", 1.160,    0, 180.0,  None),
+            ("S", 1.620,    1, 180.0,  None),
+        ],
+    },
 
-    # ── oxide ─────────────────────────────────────────────────────────────────
-    "O":   ("O", [("O", [0., 0., 0.])]),
-    "O2-": ("O", [("O", [0., 0., 0.])]),
+    # ── Acetonitrile: N donor, linear chain ───────────────────────────────────
+    "MeCN": {
+        "donor": "N",
+        "mdc_angle": 180.0,
+        "atoms": [
+            ("N", 0.000, None,  None,   None),
+            ("C", 1.160,    0,  180.0,  None),
+            ("C", 1.470,    1,  180.0,  None),
+            ("H", 1.090,    2,  109.5,  None),
+            ("H", 1.090,    2,  109.5,  120.0),
+            ("H", 1.090,    2,  109.5,  240.0),
+        ],
+    },
+    "acetonitrile": None,
 
-    # ── acetonitrile MeCN: N donor ────────────────────────────────────────────
-    # N-C≡C linear chain; methyl H at tetrahedral angles
-    # N at 0; C(nitrile) at -1.16; C(methyl) at -2.63
-    # H at tetrahedral (109.5°) from C-C bond axis, 3 H 120° apart
-    # cone half-angle = 90° - 70.5° = 19.5° wait...
-    # C-H = 1.09 Å, H-C-C angle = 109.5°, cone from -x:
-    # Hx = -2.63 - 1.09*cos(70.5°) = -2.63 - 0.364 = -2.994
-    # Hr = 1.09*sin(70.5°) = 1.027
-    "MeCN": ("N", [
-        ("N", [ 0.000,  0.000,  0.000]),
-        ("C", [-1.160,  0.000,  0.000]),
-        ("C", [-2.630,  0.000,  0.000]),
-        ("H", [-2.994,  1.027,  0.000]),
-        ("H", [-2.994, -0.514,  0.890]),
-        ("H", [-2.994, -0.514, -0.890]),
-    ]),
-    "acetonitrile": ("N", [
-        ("N", [ 0.000,  0.000,  0.000]),
-        ("C", [-1.160,  0.000,  0.000]),
-        ("C", [-2.630,  0.000,  0.000]),
-        ("H", [-2.994,  1.027,  0.000]),
-        ("H", [-2.994, -0.514,  0.890]),
-        ("H", [-2.994, -0.514, -0.890]),
-    ]),
+    # ── Azide: N donor, linear ────────────────────────────────────────────────
+    "N3": {
+        "donor": "N",
+        "mdc_angle": 180.0,
+        "atoms": [
+            ("N", 0.000, None, None,   None),
+            ("N", 1.160,    0, 180.0,  None),
+            ("N", 1.160,    1, 180.0,  None),
+        ],
+    },
 
-    # ── azide N3-: N donor, linear ────────────────────────────────────────────
-    "N3": ("N", [
-        ("N", [ 0.000,  0.000,  0.000]),
-        ("N", [-1.160,  0.000,  0.000]),
-        ("N", [-2.320,  0.000,  0.000]),
-    ]),
+    # ── Nitro: N donor, bent ──────────────────────────────────────────────────
+    "NO2": {
+        "donor": "N",
+        "mdc_angle": 120.0,
+        "atoms": [
+            ("N", 0.000, None, None,   None),
+            ("O", 1.240,    0, 120.0,  None),
+            ("O", 1.240,    0, 120.0,  180.0),
+        ],
+    },
 
-    # ── nitro NO2-: N donor, O-N-O = 115° ────────────────────────────────────
-    # N at origin; 2 O at ±57.5° from -x axis; N-O = 1.24 Å
-    "NO2": ("N", [
-        ("N", [ 0.000,  0.000,  0.000]),
-        ("O", [-0.672,  1.044,  0.000]),
-        ("O", [-0.672, -1.044,  0.000]),
-    ]),
+    # ── Methyl: C donor, tetrahedral ──────────────────────────────────────────
+    "Me": {
+        "donor": "C",
+        "mdc_angle": 111.5,
+        "atoms": [
+            ("C", 0.000, None,  None,   None),
+            ("H", 1.090,    0,  111.5,  None),
+            ("H", 1.090,    0,  111.5,  120.0),
+            ("H", 1.090,    0,  111.5,  240.0),
+        ],
+    },
 
-    # ── nitrito ONO: O donor ──────────────────────────────────────────────────
-    "ONO": ("O", [
-        ("O", [ 0.000,  0.000,  0.000]),
-        ("N", [-1.220,  0.000,  0.000]),
-        ("O", [-1.870, -1.090,  0.000]),
-    ]),
+    # ── Phosphine PH3: P donor ────────────────────────────────────────────────
+    "PH3": {
+        "donor": "P",
+        "mdc_angle": 116.75,  # cone half-angle from M-P bond
+        "atoms": [
+            ("P", 0.000, None,  None,   None),
+            ("H", 1.420,    0,  116.75, None),
+            ("H", 1.420,    0,  116.75, 120.0),
+            ("H", 1.420,    0,  116.75, 240.0),
+        ],
+    },
 
-    # ── methyl Me-: C donor, tetrahedral ─────────────────────────────────────
-    # C at origin; 3 H in trigonal pyramid pointing into -x hemisphere
-    # C-H = 1.09 Å, H-C-H = 109.5°  → same cone calculation as NH3
-    # cone half-angle = 70.5° from -x
-    "Me": ("C", [
-        ("C", [ 0.000,  0.000,  0.000]),
-        ("H", [-0.363,  1.028,  0.000]),
-        ("H", [-0.363, -0.514,  0.890]),
-        ("H", [-0.363, -0.514, -0.890]),
-    ]),
-
-    # ── phenyl Ph-: C(ipso) donor ─────────────────────────────────────────────
-    # Benzene ring in the yz-plane; ipso C at origin; ring extending into -x
-    "Ph": ("C", [
-        ("C", [ 0.000,  0.000,  0.000]),
-        ("C", [-1.400,  0.000,  0.000]),
-        ("C", [-2.100,  1.210,  0.000]),
-        ("C", [-2.100, -1.210,  0.000]),
-        ("C", [-3.500,  1.210,  0.000]),
-        ("C", [-3.500, -1.210,  0.000]),
-        ("C", [-4.200,  0.000,  0.000]),
-        ("H", [-1.570,  2.160,  0.000]),
-        ("H", [-1.570, -2.160,  0.000]),
-        ("H", [-4.050,  2.160,  0.000]),
-        ("H", [-4.050, -2.160,  0.000]),
-        ("H", [-5.290,  0.000,  0.000]),
-    ]),
-
-    # ── bridging ligands ──────────────────────────────────────────────────────
-    "mu-Cl": ("Cl", [("Cl", [0., 0., 0.])]),
-    "mu-O":  ("O",  [("O",  [0., 0., 0.])]),
-    "mu-CO": ("C", [
-        ("C", [ 0.000,  0.000,  0.000]),
-        ("O", [-1.128,  0.000,  0.000]),
-    ]),
-    "mu-H":  ("H",  [("H",  [0., 0., 0.])]),
-    "mu-CN": ("C", [
-        ("C", [ 0.000,  0.000,  0.000]),
-        ("N", [-1.160,  0.000,  0.000]),
-    ]),
+    # ── Bridging ligands ──────────────────────────────────────────────────────
+    "mu-Cl": {"donor": "Cl", "mdc_angle": None, "atoms": [("Cl", 0.000, None, None, None)]},
+    "mu-O":  {"donor": "O",  "mdc_angle": None, "atoms": [("O",  0.000, None, None, None)]},
+    "mu-CO": {
+        "donor": "C",
+        "mdc_angle": 180.0,
+        "atoms": [
+            ("C", 0.000, None, None,   None),
+            ("O", 1.128,    0, 180.0,  None),
+        ],
+    },
+    "mu-H":  {"donor": "H", "mdc_angle": None, "atoms": [("H", 0.000, None, None, None)]},
+    "mu-CN": {
+        "donor": "C",
+        "mdc_angle": 180.0,
+        "atoms": [
+            ("C", 0.000, None, None,   None),
+            ("N", 1.160,    0, 180.0,  None),
+        ],
+    },
 }
 
+# Resolve aliases
+_ALIASES = {
+    "aqua":          "H2O",
+    "ammine":        "NH3",
+    "mu-OH":         "OH",
+    "formate":       "HCOO",
+    "HCOO:mono":     "HCOO",
+    "HCOO:bridge":   "HCOO",
+    "mu-HCOO":       "HCOO",
+    "HCOOH:mono":    "HCOOH",
+    "hydride":       "H",
+    "O2-":           "O",
+    "acetonitrile":  "MeCN",
+}
+
+def _get_def(name: str) -> Optional[dict]:
+    name = _ALIASES.get(name, name)
+    d = _LIGAND_DEFS.get(name)
+    if d is None and name in _ALIASES:
+        d = _LIGAND_DEFS.get(_ALIASES[name])
+    return d
+
+
+# ── Rotation utilities ────────────────────────────────────────────────────────
 
 def _rodrigues_rotation(v_from: np.ndarray, v_to: np.ndarray) -> np.ndarray:
-    """Rotation matrix that rotates unit vector v_from onto unit vector v_to."""
     v_from = v_from / np.linalg.norm(v_from)
     v_to   = v_to   / np.linalg.norm(v_to)
-    axis = np.cross(v_from, v_to)
-    sin_a = np.linalg.norm(axis)
-    cos_a = np.dot(v_from, v_to)
+    axis   = np.cross(v_from, v_to)
+    sin_a  = np.linalg.norm(axis)
+    cos_a  = np.dot(v_from, v_to)
     if sin_a < 1e-8:
-        return np.eye(3) if cos_a > 0 else _rotation_180(v_from)
+        if cos_a > 0:
+            return np.eye(3)
+        # 180° rotation around any perpendicular axis
+        perp = np.array([1.,0.,0.]) if abs(v_from[0]) < 0.9 else np.array([0.,1.,0.])
+        axis = np.cross(v_from, perp); axis /= np.linalg.norm(axis)
+        K = np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])
+        return np.eye(3) + 2*(K@K)
     axis /= sin_a
-    K = np.array([[0, -axis[2], axis[1]],
-                  [axis[2], 0, -axis[0]],
-                  [-axis[1], axis[0], 0]])
-    return np.eye(3) + sin_a * K + (1 - cos_a) * (K @ K)
+    K = np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])
+    return np.eye(3) + sin_a*K + (1-cos_a)*(K@K)
 
 
-def _rotation_180(v: np.ndarray) -> np.ndarray:
-    """180° rotation matrix around an axis perpendicular to v."""
-    perp = np.array([1., 0., 0.]) if abs(v[0]) < 0.9 else np.array([0., 1., 0.])
-    axis = np.cross(v, perp)
+def _rot_around_axis(axis: np.ndarray, theta: float) -> np.ndarray:
+    axis = axis / np.linalg.norm(axis)
+    K = np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])
+    return np.eye(3) + np.sin(theta)*K + (1-np.cos(theta))*(K@K)
+
+
+# ── Internal-coordinate placement ────────────────────────────────────────────
+
+def _place_atom(parent_pos: np.ndarray,
+                grandparent_pos: Optional[np.ndarray],
+                bond_length: float,
+                bond_angle_deg: float,
+                dihedral_deg: Optional[float],
+                default_perp: np.ndarray = np.array([0., 0., 1.])) -> np.ndarray:
+    """
+    Place a child atom using internal coordinates.
+
+    bond_angle_deg is the TRUE bond angle at parent between
+    grandparent->parent->child (standard chemistry convention).
+    e.g. 120° for sp2 carbon, 109.5° for sp3, 180° for linear.
+    """
+    if grandparent_pos is None:
+        parent_to_child = np.array([0., 0., 1.])
+        return parent_pos + bond_length * parent_to_child
+
+    gp_to_p = parent_pos - grandparent_pos
+    gp_to_p_norm = gp_to_p / np.linalg.norm(gp_to_p)
+
+    # Reference perpendicular for dihedral
+    perp = np.cross(gp_to_p_norm, default_perp)
+    if np.linalg.norm(perp) < 1e-6:
+        perp = np.cross(gp_to_p_norm, np.array([1., 0., 0.]))
+    if np.linalg.norm(perp) < 1e-6:
+        perp = np.cross(gp_to_p_norm, np.array([0., 1., 0.]))
+    perp /= np.linalg.norm(perp)
+
+    # Rotate the gp->parent direction by (180 - bond_angle) to get parent->child.
+    # This gives the correct bond angle at parent:
+    # angle between (parent->grandparent) and (parent->child) = bond_angle_deg
+    supplement = 180.0 - bond_angle_deg
+    R_angle = _rot_around_axis(perp, np.radians(supplement))
+    child_dir = R_angle @ gp_to_p_norm
+
+    if dihedral_deg is not None:
+        R_dihedral = _rot_around_axis(gp_to_p_norm, np.radians(dihedral_deg))
+        child_dir = R_dihedral @ child_dir
+
+    return parent_pos + bond_length * child_dir
+
+
+# ── Best torsion finder ────────────────────────────────────────────────────────
+
+def _best_torsion(donor_abs: np.ndarray,
+                  metal_abs: np.ndarray,
+                  child_dir_at_zero_torsion: np.ndarray,
+                  adjacent_positions: List[np.ndarray],
+                  n_steps: int = 72) -> float:
+    """
+    Find the torsion angle (rotation around metal->donor axis) that places
+    child_dir maximally away from all adjacent donor positions.
+    Returns best torsion in radians.
+    """
+    if not adjacent_positions:
+        return 0.0
+
+    axis = donor_abs - metal_abs
+    if np.linalg.norm(axis) < 1e-6:
+        return 0.0
     axis /= np.linalg.norm(axis)
-    K = np.array([[0, -axis[2], axis[1]],
-                  [axis[2], 0, -axis[0]],
-                  [-axis[1], axis[0], 0]])
-    return np.eye(3) + 2 * (K @ K)
+
+    best_score = -1.0
+    best_theta = 0.0
+
+    for step in range(n_steps):
+        theta = 2 * np.pi * step / n_steps
+        R = _rot_around_axis(axis, theta)
+        child_dir = R @ child_dir_at_zero_torsion
+        child_abs = donor_abs + child_dir
+
+        # Score = minimum distance from child to any adjacent donor
+        min_d = min(np.linalg.norm(child_abs - adj) for adj in adjacent_positions)
+        if min_d > best_score:
+            best_score = min_d
+            best_theta = theta
+
+    return best_theta
 
 
-def _get_rdkit_geometry(smiles: str,
-                        donor_index: int,
-                        donor_symbol: str) -> Optional[List[Tuple[str, np.ndarray]]]:
+# ── Main placement function ────────────────────────────────────────────────────
+
+def place_ligand(ligand_name: str,
+                 donor_abs: np.ndarray,
+                 metal_abs: np.ndarray,
+                 adjacent_donor_positions: List[np.ndarray]) -> List[Tuple[str, np.ndarray]]:
     """
-    Use RDKit to generate 3D geometry with H atoms.
-    Returns list of (symbol, position) with donor at origin pointing along +x bulk-side.
+    Place all atoms of a monodentate ligand in absolute coordinates.
+
+    Parameters
+    ----------
+    ligand_name             : ligand name (or alias) from the library
+    donor_abs               : absolute position of donor atom
+    metal_abs               : absolute position of metal
+    adjacent_donor_positions: absolute positions of all other donor atoms
+                              (used to find the best torsion angle)
+
+    Returns
+    -------
+    List of (element_symbol, absolute_position_Å)
+    The first entry is the donor atom.
     """
-    if not _RDKIT:
-        return None
-    try:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            return None
-        mol = Chem.AddHs(mol)
-        ps = AllChem.ETKDGv3()
-        ps.randomSeed = 42
-        if AllChem.EmbedMolecule(mol, ps) == -1:
-            AllChem.EmbedMolecule(mol, AllChem.ETDG())
-        AllChem.MMFFOptimizeMolecule(mol)
-        conf = mol.GetConformer()
+    defn = _get_def(ligand_name)
+    if defn is None:
+        # Unknown ligand — just place donor atom
+        return [(ligand_name.split(":")[0], donor_abs)]
 
-        atoms = [(a.GetSymbol(), np.array(conf.GetAtomPosition(i)))
-                 for i, a in enumerate(mol.GetAtoms())]
+    atoms_def = defn["atoms"]
+    mdc_angle  = defn.get("mdc_angle")
 
-        # Translate so donor is at origin
-        d_pos = atoms[donor_index][1].copy()
-        atoms = [(sym, pos - d_pos) for sym, pos in atoms]
+    if len(atoms_def) == 1:
+        # Single-atom ligand (halide, hydride, etc.)
+        return [(atoms_def[0][0], donor_abs.copy())]
 
-        # Find "bulk direction" = centroid of non-donor heavy atoms
-        heavy_non_donor = [pos for i, (sym, pos) in enumerate(atoms)
-                           if i != donor_index and sym != 'H']
-        if heavy_non_donor:
-            bulk = np.mean(heavy_non_donor, axis=0)
+    # ── Step 1: build the ligand in a local frame ─────────────────────────────
+    # The donor is at origin, metal at (+bl, 0, 0) in local frame.
+    # The first child is placed at mdc_angle from the M-donor bond.
+    # All subsequent atoms use standard IC placement.
+
+    # Build initial positions array (local frame)
+    local_pos = [np.zeros(3)]  # atom 0 = donor at origin
+
+    # Axis from donor toward metal (local frame = +x)
+    m_dir_local = np.array([1., 0., 0.])
+
+    for i, (sym, bond, parent_idx, angle, dihedral) in enumerate(atoms_def[1:], start=1):
+        p_pos = local_pos[parent_idx]
+
+        if parent_idx == 0 and mdc_angle is not None:
+            # First child: M-donor-child angle = mdc_angle (true bond angle at donor)
+            # Metal is at +x in local frame.
+            # The O->M direction is +x. The O->C direction is mdc_angle away from O->M.
+            # So child_local = [cos(mdc_angle), 0, sin(mdc_angle)]
+            # e.g. mdc_angle=120 → [-0.5, 0, 0.866] — pointing away from metal ✓
+            angle_rad = np.radians(mdc_angle)
+            child_local = np.array([np.cos(angle_rad), 0., np.sin(angle_rad)])
+            child_pos = p_pos + bond * child_local
         else:
-            # Just H atoms (e.g. H2O, NH3) — use their centroid
-            h_pos = [pos for i, (sym, pos) in enumerate(atoms)
-                     if i != donor_index]
-            if h_pos:
-                bulk = np.mean(h_pos, axis=0)
+            gp_pos = local_pos[atoms_def[i][2] - 1] if parent_idx > 0 else None
+            # Use grandparent
+            if parent_idx > 0:
+                gp_idx = atoms_def[i][2]  # parent_idx of this atom's parent
+                # Actually: grandparent of atom i is atoms_def[parent_idx][2]
+                gp_of_parent = atoms_def[parent_idx][2]
+                gp_pos = local_pos[gp_of_parent] if gp_of_parent is not None else None
             else:
-                bulk = np.array([-1., 0., 0.])
+                gp_pos = None
 
-        # Rotate so bulk points along -x (away from metal which will be at +x)
-        if np.linalg.norm(bulk) > 1e-3:
-            R = _rodrigues_rotation(bulk / np.linalg.norm(bulk),
-                                    np.array([-1., 0., 0.]))
-            atoms = [(sym, R @ pos) for sym, pos in atoms]
+            child_pos = _place_atom(
+                p_pos, gp_pos,
+                bond, angle if angle else 109.5,
+                dihedral,
+                default_perp=np.array([0., 1., 0.])
+            )
 
-        return atoms
-    except Exception:
-        return None
+        local_pos.append(child_pos)
 
+    # ── Step 2: transform to absolute frame ──────────────────────────────────
+    # Rotate so that local +x (toward metal) maps to actual donor->metal direction
+    m_to_d = donor_abs - metal_abs
+    if np.linalg.norm(m_to_d) < 1e-6:
+        return [(sym, donor_abs) for sym, *_ in atoms_def]
 
-def get_ligand_atoms(ligand_name: str,
-                     smiles: str,
-                     donor_symbol: str,
-                     donor_index: int = 0) -> List[Tuple[str, np.ndarray]]:
-    """
-    Return list of (element_symbol, relative_position_Å) for a ligand,
-    with the donor atom at origin and ligand bulk pointing along -x.
+    d_to_m_abs = (metal_abs - donor_abs) / np.linalg.norm(metal_abs - donor_abs)
+    R_frame = _rodrigues_rotation(m_dir_local, d_to_m_abs)
 
-    The metal will be placed in the +x direction from the donor atom.
-    The caller translates & rotates these relative positions into the
-    global frame using the geometry vectors.
-    """
-    # 1. Try hard-coded fallback first (faster, deterministic)
-    if ligand_name in _FALLBACK_GEOMS:
-        _, atom_list = _FALLBACK_GEOMS[ligand_name]
-        return [(sym, np.array(pos, dtype=float)) for sym, pos in atom_list]
+    # Rotate all local positions and translate to absolute frame
+    abs_pos_base = [donor_abs + R_frame @ p for p in local_pos]
 
-    # 2. Try RDKit
-    if _RDKIT and smiles:
-        result = _get_rdkit_geometry(smiles, donor_index, donor_symbol)
-        if result is not None:
-            return result
+    # ── Step 3: find best torsion around metal->donor axis ────────────────────
+    if len(abs_pos_base) > 1 and adjacent_donor_positions:
+        # The first child (atom 1) defines the torsion reference direction
+        child1_dir = abs_pos_base[1] - donor_abs
+        if np.linalg.norm(child1_dir) > 1e-6:
+            best_theta = _best_torsion(
+                donor_abs, metal_abs,
+                child1_dir,
+                adjacent_donor_positions
+            )
+            # Apply torsion to all non-donor atoms
+            axis = (donor_abs - metal_abs) / np.linalg.norm(donor_abs - metal_abs)
+            R_torsion = _rot_around_axis(axis, best_theta)
+            abs_pos_final = [abs_pos_base[0]]   # donor stays fixed
+            for pos in abs_pos_base[1:]:
+                rotated = R_torsion @ (pos - donor_abs) + donor_abs
+                abs_pos_final.append(rotated)
+        else:
+            abs_pos_final = abs_pos_base
+    else:
+        abs_pos_final = abs_pos_base
 
-    # 3. Last resort: just the donor atom
-    return [(donor_symbol, np.zeros(3))]
-
-
-def get_ligand_atoms_multidentate(
-        ligand_name: str,
-        smiles: str,
-        donor_symbols: List[str],
-        donor_indices: List[int],
-        bite_angle_deg: float = 90.0,
-        bond_lengths: Optional[List[float]] = None,
-) -> List[Tuple[str, np.ndarray]]:
-    """
-    For multidentate ligands: return full atom list with donor atoms
-    pre-positioned at ±bite_angle/2 from the +x axis in the xy-plane.
-    The metal is at the origin; donor atoms are at their bond lengths.
-
-    Returns list of (symbol, absolute_position) — NOT relative to donor,
-    but in the metal-centred frame ready to be added directly.
-    """
-    n_donors = len(donor_symbols)
-    if bond_lengths is None:
-        bond_lengths = [2.0] * n_donors
-
-    if n_donors == 1:
-        # Just treat as monodentate
-        bl = bond_lengths[0]
-        atoms = get_ligand_atoms(ligand_name, smiles, donor_symbols[0], donor_indices[0])
-        # Translate: donor is at (bl, 0, 0)
-        donor_abs = np.array([bl, 0., 0.])
-        result = []
-        for sym, rel in atoms:
-            result.append((sym, rel + donor_abs))
-        return result
-
-    # Place donor atoms symmetrically around +x in the xy-plane
-    half = np.radians(bite_angle_deg / 2)
-    donor_positions = []
-    for i, (bl, sym) in enumerate(zip(bond_lengths, donor_symbols)):
-        sign = 1 if i == 0 else -1
-        angle = sign * half
-        donor_positions.append(np.array([bl * np.cos(angle), bl * np.sin(angle), 0.]))
-
-    # Try to get full ligand from RDKit, then superimpose donors
-    if _RDKIT and smiles:
-        rdkit_atoms = _get_rdkit_geometry(smiles, donor_indices[0], donor_symbols[0])
-        if rdkit_atoms is not None:
-            # rdkit_atoms has donor0 at origin; find donor1 position
-            # and rotate the whole thing so donors match our target positions
-            rdkit_d0 = np.zeros(3)  # donor0 is at origin
-            # Find donor1 in rdkit_atoms (index by position in original smiles)
-            # Since we only stored by order, use index 1 of heavy atoms after donor0
-            # Approximate: the second distinct heavy atom that's a donor type
-            rdkit_d1 = None
-            heavy = [(sym, pos) for sym, pos in rdkit_atoms
-                     if sym not in ('H',) and not np.allclose(pos, 0)]
-            if heavy:
-                rdkit_d1 = heavy[0][1]
-
-            if rdkit_d1 is not None:
-                # Compute rotation: align rdkit donor0->donor1 with target d0->d1
-                v_rdkit = rdkit_d1 - rdkit_d0
-                v_target = donor_positions[1] - donor_positions[0]
-                if np.linalg.norm(v_rdkit) > 1e-3 and np.linalg.norm(v_target) > 1e-3:
-                    R = _rodrigues_rotation(v_rdkit / np.linalg.norm(v_rdkit),
-                                            v_target / np.linalg.norm(v_target))
-                    # Scale: adjust donor positions to our bond lengths
-                    scale = np.linalg.norm(v_target) / np.linalg.norm(v_rdkit)
-                    result = []
-                    for sym, pos in rdkit_atoms:
-                        new_pos = R @ (pos * scale) + donor_positions[0]
-                        result.append((sym, new_pos))
-                    return result
-
-    # Fallback: just put donor atoms at computed positions, no H
-    result = []
-    for sym, pos in zip(donor_symbols, donor_positions):
-        result.append((sym, pos))
+    result = [(atoms_def[i][0], abs_pos_final[i]) for i in range(len(atoms_def))]
     return result
 
 
-# ── clash detection and resolution ───────────────────────────────────────────
+# ── Clash detection ───────────────────────────────────────────────────────────
 
-# Minimum acceptable non-bonded distances by element-pair
 _MIN_NONBONDED = {
     ("H",  "H"):  1.40,
     ("H",  "C"):  1.70,
     ("H",  "N"):  1.70,
-    ("H",  "O"):  1.40,   # H...O contacts: relax for bulky ligand initial structures
+    ("H",  "O"):  1.40,
     ("H",  "S"):  1.90,
     ("H",  "P"):  1.90,
     ("H",  "Cl"): 1.90,
     ("C",  "C"):  2.20,
     ("C",  "N"):  2.10,
-    ("C",  "O"):  1.80,   # formate C is ~1.7-1.9 Å from adjacent donor O in crystal structures
+    ("C",  "O"):  1.80,
     ("N",  "O"):  1.90,
     ("O",  "O"):  2.00,
 }
 
-# Maximum bond lengths (to distinguish bonded from non-bonded short contacts)
 _MAX_BOND = {
-    ("H",  "C"):  1.15,
-    ("H",  "N"):  1.15,
-    ("H",  "O"):  1.10,
-    ("H",  "S"):  1.40,
-    ("H",  "P"):  1.50,
-    ("C",  "C"):  1.60,
-    ("C",  "N"):  1.55,
-    ("C",  "O"):  1.55,
-    ("C",  "S"):  1.85,
-    ("N",  "N"):  1.50,
-    ("N",  "O"):  1.50,
-    ("O",  "O"):  1.55,
+    ("H",  "C"):  1.15, ("H",  "N"):  1.15, ("H",  "O"):  1.10,
+    ("H",  "S"):  1.40, ("H",  "P"):  1.50,
+    ("C",  "C"):  1.60, ("C",  "N"):  1.55, ("C",  "O"):  1.55,
+    ("C",  "S"):  1.85, ("N",  "N"):  1.50, ("N",  "O"):  1.50, ("O",  "O"):  1.55,
 }
 
-
-def _pair_key(s1: str, s2: str) -> tuple:
+def _pair_key(s1, s2):
     return tuple(sorted([s1, s2]))
 
-
-def _is_bonded(s1: str, s2: str, d: float) -> bool:
+def _is_bonded(s1, s2, d):
     return d <= _MAX_BOND.get(_pair_key(s1, s2), 2.0)
 
-
-def _is_clash(s1: str, s2: str, d: float) -> bool:
-    """Return True if two non-bonded atoms are closer than the minimum allowed distance."""
+def _is_clash(s1, s2, d):
     if _is_bonded(s1, s2, d):
         return False
     return d < _MIN_NONBONDED.get(_pair_key(s1, s2), 2.00)
 
+def check_clashes(new_atoms, existing_atoms):
+    return [(sn, pn, se, pe, np.linalg.norm(pn-pe))
+            for sn, pn in new_atoms
+            for se, pe in existing_atoms
+            if _is_clash(sn, se, np.linalg.norm(pn-pe))]
 
-def check_clashes(new_atoms: List[Tuple[str, np.ndarray]],
-                  existing_atoms: List[Tuple[str, np.ndarray]]) -> List[tuple]:
-    """
-    Find all clashes between new_atoms and existing_atoms.
-    Returns list of (sym_new, pos_new, sym_exist, pos_exist, distance).
-    """
-    clashes = []
-    for sn, pn in new_atoms:
-        for se, pe in existing_atoms:
-            d = np.linalg.norm(pn - pe)
-            if _is_clash(sn, se, d):
-                clashes.append((sn, pn, se, pe, d))
-    return clashes
-
-
-def resolve_clash_by_rotation(new_atoms: List[Tuple[str, np.ndarray]],
-                               donor_abs_pos: np.ndarray,
-                               metal_pos: np.ndarray,
-                               existing_atoms: List[Tuple[str, np.ndarray]],
-                               n_steps: int = 36) -> List[Tuple[str, np.ndarray]]:
-    """
-    Try rotating the ligand around the metal→donor axis in n_steps increments
-    to find the orientation with the fewest / least severe clashes.
-
-    Parameters
-    ----------
-    new_atoms      : list of (symbol, absolute_position) for the new ligand
-    donor_abs_pos  : absolute position of the donor atom
-    metal_pos      : absolute position of the metal
-    existing_atoms : already-placed atoms to check against
-    n_steps        : number of rotation increments to try (default 36 = 10° steps)
-
-    Returns
-    -------
-    Best rotated atom list (fewest clashes, then minimum worst-case distance sum).
-    """
-    axis = donor_abs_pos - metal_pos
-    norm = np.linalg.norm(axis)
-    if norm < 1e-6:
-        return new_atoms
-    axis = axis / norm
-
-    def rotate_about_axis(atoms, theta):
-        """Rotate atoms around the metal→donor axis by theta radians."""
-        K = np.array([[0,       -axis[2],  axis[1]],
-                      [axis[2],  0,        -axis[0]],
-                      [-axis[1], axis[0],   0      ]])
-        R = np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * (K @ K)
-        rotated = []
-        for sym, pos in atoms:
-            # rotate around metal position
-            p = pos - metal_pos
-            rotated.append((sym, R @ p + metal_pos))
-        return rotated
-
-    best_atoms = new_atoms
-    best_score = _clash_score(new_atoms, existing_atoms)
-
-    for step in range(1, n_steps):
-        theta = 2 * np.pi * step / n_steps
-        rotated = rotate_about_axis(new_atoms, theta)
-        score = _clash_score(rotated, existing_atoms)
-        if score < best_score:
-            best_score = score
-            best_atoms = rotated
-        if best_score == 0:
-            break
-
-    return best_atoms
-
-
-def _clash_score(new_atoms: List[Tuple[str, np.ndarray]],
-                 existing_atoms: List[Tuple[str, np.ndarray]]) -> float:
-    """
-    Score = sum of (min_dist - actual_dist) for all clashing pairs.
-    0 means no clashes.
-    """
+def _clash_score(new_atoms, existing_atoms):
     score = 0.0
     for sn, pn in new_atoms:
         for se, pe in existing_atoms:
             d = np.linalg.norm(pn - pe)
             if _is_clash(sn, se, d):
-                threshold = _MIN_NONBONDED.get(_pair_key(sn, se), 2.0)
-                score += (threshold - d)
+                score += _MIN_NONBONDED.get(_pair_key(sn, se), 2.0) - d
     return score
+
+def resolve_clash_by_rotation(new_atoms, donor_abs, metal_pos, existing_atoms, n_steps=72):
+    axis = donor_abs - metal_pos
+    if np.linalg.norm(axis) < 1e-6:
+        return new_atoms
+    axis /= np.linalg.norm(axis)
+    best = new_atoms
+    best_score = _clash_score(new_atoms, existing_atoms)
+    for step in range(1, n_steps):
+        theta = 2*np.pi*step/n_steps
+        R = _rot_around_axis(axis, theta)
+        rotated = [(s, R@(p-metal_pos)+metal_pos) for s,p in new_atoms]
+        score = _clash_score(rotated, existing_atoms)
+        if score < best_score:
+            best_score = score
+            best = rotated
+        if best_score == 0:
+            break
+    return best
+
+
+# ── Legacy compatibility shims ────────────────────────────────────────────────
+# These are called by api.py; they now delegate to place_ligand()
+
+def get_ligand_atoms(ligand_name: str, smiles: str, donor_symbol: str,
+                     donor_index: int = 0) -> List[Tuple[str, np.ndarray]]:
+    """
+    Legacy interface: return atom list in OLD local-frame convention
+    (donor at origin, metal at +x, bulk along -x) for use in api.py.
+    This is only used when adjacent positions are unknown; place_ligand()
+    is preferred and called directly from _build_single().
+    """
+    defn = _get_def(ligand_name)
+    if defn is None:
+        return [(donor_symbol, np.zeros(3))]
+    atoms_def = defn["atoms"]
+    if len(atoms_def) == 1:
+        return [(atoms_def[0][0], np.zeros(3))]
+
+    # Place with metal at +x, no adjacent donors
+    donor_abs = np.zeros(3)
+    metal_abs = np.array([2.0, 0., 0.])  # dummy, direction only matters
+    result = place_ligand(ligand_name, donor_abs, metal_abs, [])
+    # Shift so donor is at origin
+    d_pos = result[0][1]
+    return [(s, p - d_pos) for s, p in result]
+
+
+def get_ligand_atoms_multidentate(ligand_name, smiles, donor_symbols, donor_indices,
+                                   bite_angle_deg=90.0, bond_lengths=None):
+    """Legacy shim for bidentate/multidentate — unchanged."""
+    if bond_lengths is None:
+        bond_lengths = [2.0] * len(donor_symbols)
+    if len(donor_symbols) == 1:
+        bl = bond_lengths[0]
+        return [(donor_symbols[0], np.array([bl, 0., 0.]))]
+    half = np.radians(bite_angle_deg / 2)
+    result = []
+    for i, (sym, bl) in enumerate(zip(donor_symbols, bond_lengths)):
+        sign = 1 if i == 0 else -1
+        result.append((sym, np.array([bl*np.cos(sign*half), bl*np.sin(sign*half), 0.])))
+    return result
