@@ -70,6 +70,10 @@ EXTRA_GEOM      = {4: ["sqp"], 5: ["tbp"]}
 OUTPUT_ROOT = Path("poscar")
 CSV_FILE    = Path("ni_complexes_summary.csv")
 
+# Set to False to skip isomer enumeration and generate only one
+# representative structure per ligand combination / geometry.
+GENERATE_ISOMERS = False
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def geometries_for_cn(cn):
@@ -124,7 +128,10 @@ def generate_monomers(rows):
                 if ox + lig_charge != 0:
                     continue
                 for geom in geometries_for_cn(cn):
-                    iso_list = enumerate_isomers(list(combo), geom)
+                    if GENERATE_ISOMERS:
+                        iso_list = enumerate_isomers(list(combo), geom)
+                    else:
+                        iso_list = [{"site_assignment": list(combo), "label": "only"}]
                     for iso in iso_list:
                         try:
                             mol = build("Ni", ox=ox,
@@ -185,6 +192,9 @@ def generate_monomers(rows):
 
 # ── DIMERS ────────────────────────────────────────────────────────────────────
 
+# Minimum number of bridge ligands required for dimers (enforces bridging character)
+MIN_BRIDGES_DIMER = 2
+
 def generate_dimers(rows):
     print("\n" + "="*60)
     print("  DIMERS")
@@ -195,13 +205,14 @@ def generate_dimers(rows):
         ox_label = "NiII" if ox == 2 else "NiIII"
         for bridge in BRIDGE_LIGANDS:
             bc = BRIDGE_CHARGE[bridge]
-            for n_bridges in [1, 2, 3]:
+            for n_bridges in range(MIN_BRIDGES_DIMER, 4):   # 2 or 3 bridges
                 # Pure monodentate terminal ligands
                 for n_term in range(0, 8 - n_bridges):
                     for terminal in (combinations_with_replacement(MONO_LIGANDS, n_term)
                                      if n_term > 0 else [()]):
                         tc = sum(MONO_CHARGE[l] for l in terminal)
-                        if ox + n_bridges * bc + tc != 0:
+                        # Charge: 2*ox (two metals) + 2*terminal_charge + n_bridges*bc = 0
+                        if 2 * ox + 2 * tc + n_bridges * bc != 0:
                             continue
                         cn = n_term + n_bridges
                         if not (3 <= cn <= 7):
@@ -221,8 +232,9 @@ def generate_dimers(rows):
                                  f"{safe(cl)}_{n_bridges}x{safe(bridge)}.POSCAR")
                         write_poscar(mol, path)
                         n += 1
+                        clash_note = f"  ⚠ {len(mol._clash_warnings)} clashes" if getattr(mol, '_clash_warnings', None) else ""
                         print(f"  ✓ dimer  {ox_label} CN{cn}  {n_bridges}x{bridge:10s}  "
-                              f"term={list(terminal)}  {mol.formula}")
+                              f"term={list(terminal)}  {mol.formula}{clash_note}")
                         rows.append(mol_to_row(mol, "dimer", ox, cn, geom,
                                                cl, bridge, n_bridges, None,
                                                "only", path))
@@ -237,7 +249,7 @@ def generate_dimers(rows):
                                            if n_mono > 0 else [()]):
                             tc = (n_bi * BI_CHARGE["HCOO:bi"] +
                                   sum(MONO_CHARGE[l] for l in mono_combo))
-                            if ox + n_bridges * bc + tc != 0:
+                            if 2 * ox + 2 * tc + n_bridges * bc != 0:
                                 continue
                             terminal = ["HCOO:bi"] * n_bi + list(mono_combo)
                             try:
@@ -254,8 +266,9 @@ def generate_dimers(rows):
                                     f"{safe(cl)}_{n_bridges}x{safe(bridge)}.POSCAR")
                             write_poscar(mol, path)
                             n += 1
+                            clash_note = f"  ⚠ {len(mol._clash_warnings)} clashes" if getattr(mol, '_clash_warnings', None) else ""
                             print(f"  ✓ dimer  {ox_label} CN{cn}  {n_bridges}x{bridge:10s}  "
-                                  f"term={terminal}  {mol.formula}")
+                                  f"term={terminal}  {mol.formula}{clash_note}")
                             rows.append(mol_to_row(mol, "dimer", ox, cn, geom,
                                                    cl, bridge, n_bridges, None,
                                                    "only", path))
@@ -263,6 +276,10 @@ def generate_dimers(rows):
 
 
 # ── TRIMERS ───────────────────────────────────────────────────────────────────
+
+# Minimum bridge count per edge for trimers
+# triangular: 3 edges, linear: 2 edges — each edge needs at least 1 bridge
+MIN_BRIDGES_PER_EDGE_TRIMER = 1
 
 def generate_trimers(rows):
     print("\n" + "="*60)
@@ -274,18 +291,22 @@ def generate_trimers(rows):
         ox_label = "NiII" if ox == 2 else "NiIII"
         for bridge in BRIDGE_LIGANDS:
             bc = BRIDGE_CHARGE[bridge]
-            # trimer() adds bridge twice per metal
             for n_term in range(0, 6):
                 # Pure monodentate terminal
                 for terminal in (combinations_with_replacement(MONO_LIGANDS, n_term)
                                  if n_term > 0 else [()]):
                     tc = sum(MONO_CHARGE[l] for l in terminal)
-                    if ox + 2 * bc + tc != 0:
-                        continue
-                    cn = n_term + 2
-                    if not (3 <= cn <= 7):
-                        continue
                     for arrangement in ["linear", "triangular"]:
+                        # triangular: 3 edges → 3 bridge ligands total
+                        # linear:     2 edges → 2 bridge ligands total
+                        n_bridge_edges = 3 if arrangement == "triangular" else 2
+                        # Charge: 3*ox + 3*tc + n_bridge_edges*bc = 0
+                        if 3 * ox + 3 * tc + n_bridge_edges * bc != 0:
+                            continue
+                        cn_bridges_per_metal = 2 if arrangement == "triangular" else 1
+                        cn = n_term + cn_bridges_per_metal
+                        if not (3 <= cn <= 7):
+                            continue
                         try:
                             mol = trimer("Ni", ox=ox,
                                          terminal=list(terminal),
@@ -301,24 +322,27 @@ def generate_trimers(rows):
                                 f"{safe(cl)}_{safe(bridge)}_{arrangement}.POSCAR")
                         write_poscar(mol, path)
                         n += 1
+                        clash_note = f"  ⚠ {len(mol._clash_warnings)} clashes" if getattr(mol, '_clash_warnings', None) else ""
                         print(f"  ✓ trimer {ox_label} CN{cn}  {bridge:10s}  "
-                              f"term={list(terminal)}  {arrangement:12s}  {mol.formula}")
+                              f"term={list(terminal)}  {arrangement:12s}  {mol.formula}{clash_note}")
                         rows.append(mol_to_row(mol, f"trimer_{arrangement}", ox, cn, geom,
-                                               cl, bridge, 2, arrangement, "only", path))
+                                               cl, bridge, n_bridge_edges, arrangement, "only", path))
 
                 # With bidentate terminal
                 for n_bi in range(1, 3):
-                    cn = 2 + n_bi * 2 + n_term
+                    cn_bridges_per_metal = 2   # triangular always
+                    cn = cn_bridges_per_metal + n_bi * 2 + n_term
                     if not (3 <= cn <= 7):
                         continue
                     for mono_combo in (combinations_with_replacement(MONO_LIGANDS, n_term)
                                        if n_term > 0 else [()]):
                         tc = (n_bi * BI_CHARGE["HCOO:bi"] +
                               sum(MONO_CHARGE[l] for l in mono_combo))
-                        if ox + 2 * bc + tc != 0:
-                            continue
-                        terminal = ["HCOO:bi"] * n_bi + list(mono_combo)
                         for arrangement in ["linear", "triangular"]:
+                            n_bridge_edges = 3 if arrangement == "triangular" else 2
+                            if 3 * ox + 3 * tc + n_bridge_edges * bc != 0:
+                                continue
+                            terminal = ["HCOO:bi"] * n_bi + list(mono_combo)
                             try:
                                 mol = trimer("Ni", ox=ox,
                                              terminal=terminal,
@@ -334,10 +358,11 @@ def generate_trimers(rows):
                                     f"{safe(cl)}_{safe(bridge)}_{arrangement}.POSCAR")
                             write_poscar(mol, path)
                             n += 1
+                            clash_note = f"  ⚠ {len(mol._clash_warnings)} clashes" if getattr(mol, '_clash_warnings', None) else ""
                             print(f"  ✓ trimer {ox_label} CN{cn}  {bridge:10s}  "
-                                  f"term={terminal}  {arrangement}  {mol.formula}")
+                                  f"term={terminal}  {arrangement}  {mol.formula}{clash_note}")
                             rows.append(mol_to_row(mol, f"trimer_{arrangement}", ox, cn, geom,
-                                                   cl, bridge, 2, arrangement, "only", path))
+                                                   cl, bridge, n_bridge_edges, arrangement, "only", path))
     return n
 
 
