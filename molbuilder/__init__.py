@@ -1,3 +1,4 @@
+__version__ = "2.0.0"
 """molbuilder – transition metal complex builder → POSCAR (VASP)"""
 from molbuilder.api import (
     build, dimer, trimer, poscar, xyz, info,
