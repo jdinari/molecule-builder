@@ -498,6 +498,30 @@ def build(metal: str,
     return results
 
 
+def _check_assembly_clashes(mol: "Molecule",
+                             tol_scale: float = 0.85) -> list:
+    """
+    Return a list of (i, j, sym_i, sym_j, distance) tuples for every
+    non-bonded atom pair closer than tol_scale * min_nonbonded threshold.
+    Bonded pairs (d <= MAX_BOND) are excluded automatically.
+    """
+    from molbuilder.ligands.ligand_geometry import _MIN_NONBONDED, _MAX_BOND, _pair_key
+    clashes = []
+    atoms = mol.atoms
+    for i in range(len(atoms)):
+        for j in range(i + 1, len(atoms)):
+            si, sj = atoms[i].symbol, atoms[j].symbol
+            d = float(np.linalg.norm(atoms[i].position - atoms[j].position))
+            # skip bonded pairs
+            max_bond = _MAX_BOND.get(_pair_key(si, sj), 2.0)
+            if d <= max_bond:
+                continue
+            threshold = _MIN_NONBONDED.get(_pair_key(si, sj), 2.0) * tol_scale
+            if d < threshold:
+                clashes.append((i, j, si, sj, d))
+    return clashes
+
+
 def dimer(metal: str,
           ox: int,
           terminal: Optional[List[str]] = None,
@@ -508,6 +532,11 @@ def dimer(metal: str,
           mm_distance: Optional[float] = None) -> Molecule:
     """
     Build a dinuclear complex with bridging ligand(s).
+
+    Bridge ligands are placed geometrically spanning both metals:
+    each bridge contributes one donor to each metal center, sitting
+    in the equatorial plane between them.  Terminal ligands fill the
+    remaining coordination sites on each metal.
 
     Parameters
     ----------
@@ -532,6 +561,20 @@ def dimer(metal: str,
     if terminal is None:
         terminal = []
 
+    # ── Determine M-M distance ────────────────────────────────────────────────
+    geom = geometry or "oct"
+
+    if bridge:
+        try:
+            bl_data = get_ligand(bridge.replace("mu-", ""))
+            bridge_donor = bl_data.get("donor_atoms", ["O"])[0]
+        except KeyError:
+            bridge_donor = "O"
+        bridge_bl = get_bond_length(metal, ox, bridge_donor, geom)
+    else:
+        bridge_bl = 2.5
+        bridge_donor = "O"
+
     if mm_distance is not None:
         d_mm = mm_distance
     elif mm_bond:
@@ -539,37 +582,167 @@ def dimer(metal: str,
         r = COVALENT_RADII.get(metal, 1.5)
         d_mm = 2 * r + 0.1
     else:
-        if bridge:
-            try:
-                bl_data = get_ligand(bridge.replace("mu-", ""))
-                donor = bl_data.get("donor_atoms", ["Cl"])[0]
-            except KeyError:
-                donor = "Cl"
-            bridge_bl = get_bond_length(metal, ox, donor, geometry or "oct")
+        # Realistic M-M distance through a single-atom bridge:
+        # M-X-M angle ~105° for mu-OH, ~120° for mu-HCOO
+        # d_MM = 2 * bl * sin(angle/2)
+        bridge_angle_deg = 105.0 if "OH" in (bridge or "") else 120.0
+        d_mm = 2.0 * bridge_bl * np.sin(np.radians(bridge_angle_deg / 2))
+        d_mm = max(d_mm, 2.8)   # hard floor for sanity
+
+    # ── Place the two metals along the x-axis ────────────────────────────────
+    m1_pos = np.array([-d_mm / 2,  0., 0.])
+    m2_pos = np.array([ d_mm / 2,  0., 0.])
+    m_axis  = np.array([1., 0., 0.])   # unit vector M1 → M2
+
+    # ── Get all geometry vectors for each metal center ────────────────────────
+    cn_term = len(terminal)   # terminal ligands per metal (not counting bridges)
+    cn_total = cn_term + n    # total CN per metal
+    geom_canon = resolve_geometry(geom) if geom else infer_geometry(cn_total)
+    vecs_raw = get_geometry_vectors(geom_canon)
+    while len(vecs_raw) < cn_total:
+        ang = np.pi * len(vecs_raw) / (cn_total + 1)
+        vecs_raw.append(np.array([np.sin(ang), np.cos(ang), 0.3]) /
+                        np.linalg.norm([np.sin(ang), np.cos(ang), 0.3]))
+
+    # ── Partition vectors: bridges get the ones closest to ±x-axis ───────────
+    # For M1 we want bridge vectors pointing toward M2 (+x hemisphere)
+    # For M2 we want bridge vectors pointing toward M1 (-x hemisphere)
+    # Sort by x-component (descending for M1 bridge sites)
+    vecs_sorted_desc = sorted(vecs_raw, key=lambda v: -v[0])
+    bridge_vecs_m1 = vecs_sorted_desc[:n]          # point toward +x (M2)
+    terminal_vecs_m1 = vecs_sorted_desc[n:][:cn_term]
+
+    # M2 bridge vectors are the mirror of M1's (flip x)
+    bridge_vecs_m2 = [np.array([-v[0], v[1], v[2]]) for v in bridge_vecs_m1]
+    terminal_vecs_m2 = terminal_vecs_m1   # same local frame, just offset
+
+    # ── Build atom list ───────────────────────────────────────────────────────
+    all_atoms: List[Atom] = []
+    total_charge = 0
+
+    def _add_metal(pos, idx_label):
+        all_atoms.append(Atom(symbol=metal, position=pos.copy(),
+                               label=f"{metal}{idx_label}"))
+
+    def _add_terminal_ligands(metal_pos, vecs, charge_accum):
+        charge = charge_accum
+        for i, lig_name in enumerate(terminal):
+            v = vecs[i] if i < len(vecs) else vecs[-1]
+            exp = _expand_ligand(lig_name, metal, ox, geom_canon)
+            bl  = get_bond_length(metal, ox, exp["donor_atom"], geom_canon)
+            donor_abs = metal_pos + v * bl
+            other_donors = [metal_pos + vecs[j] * bl
+                            for j in range(len(vecs)) if j != i]
+            placed = place_ligand(lig_name, donor_abs, metal_pos, other_donors)
+            for sym, pos in placed:
+                all_atoms.append(Atom(symbol=sym, position=pos,
+                                       label=f"{sym}{len(all_atoms)}"))
+            charge += exp["charge"]
+        return charge
+
+    def _add_bridge_atoms(bridge_name, m1_pos, m2_pos, bv1, bv2, bl):
+        """
+        Place a single bridging ligand between m1 and m2.
+        The donor atom is placed at the midpoint between the two bridge-vector
+        tips, then the ligand body is built pointing away from both metals.
+        """
+        exp = _expand_ligand(bridge_name, metal, ox, geom_canon)
+        # Donor sits at the midpoint of the two ideal donor positions
+        d1_ideal = m1_pos + bv1 * bl
+        d2_ideal = m2_pos + bv2 * bl
+        bridge_mid = (d1_ideal + d2_ideal) / 2.0
+
+        # For mu-OH: single O donor bridging both metals — place one O at midpoint
+        # For mu-HCOO: single C-bridging formate; O1 toward m1, O2 toward m2
+        bridge_name_base = bridge_name.replace("mu-", "")
+        if bridge_name_base in ("OH",):
+            # Single bridging atom
+            donor_pos = bridge_mid
+            all_atoms.append(Atom(symbol="O", position=donor_pos,
+                                   label=f"O{len(all_atoms)}"))
+            # Add the H pointing away from the M-M axis
+            away = np.cross(bv1, np.array([0., 0., 1.]))
+            if np.linalg.norm(away) < 1e-6:
+                away = np.array([0., 1., 0.])
+            away /= np.linalg.norm(away)
+            h_pos = donor_pos + 0.96 * away
+            all_atoms.append(Atom(symbol="H", position=h_pos,
+                                   label=f"H{len(all_atoms)}"))
         else:
-            bridge_bl = 2.5
-        d_mm = 2 * bridge_bl + 0.5
+            # mu-HCOO: formate with O1 on m1 side, O2 on m2 side
+            # C sits above the midpoint away from the M-M axis
+            o1_pos = m1_pos + bv1 * bl
+            o2_pos = m2_pos + bv2 * bl
+            # C at midpoint displaced away from M-M axis
+            mid_oo = (o1_pos + o2_pos) / 2.0
+            away = np.array([0., 0., 1.0])  # out-of-plane
+            # Ensure C is away from both metals
+            c_dist = np.sqrt(max(1.26**2 - (np.linalg.norm(o2_pos - o1_pos)/2)**2, 0.01))
+            c_pos = mid_oo + c_dist * away
+            h_pos = c_pos + 1.09 * away
+            all_atoms.append(Atom(symbol="O", position=o1_pos,
+                                   label=f"O{len(all_atoms)}"))
+            all_atoms.append(Atom(symbol="O", position=o2_pos,
+                                   label=f"O{len(all_atoms)}"))
+            all_atoms.append(Atom(symbol="C", position=c_pos,
+                                   label=f"C{len(all_atoms)}"))
+            all_atoms.append(Atom(symbol="H", position=h_pos,
+                                   label=f"H{len(all_atoms)}"))
 
-    per_metal = list(terminal) + ([bridge] * n if bridge else [])
-    mol1 = _build_single(metal, ox, per_metal, geometry, None)
-    mol2 = _build_single(metal, ox, per_metal, geometry, None)
+    # Place metals
+    metal_idx_1 = len(all_atoms)
+    _add_metal(m1_pos, 1)
+    metal_idx_2_placeholder = None   # will fill after M1 ligands
 
-    offset = np.array([d_mm, 0., 0.])
-    for a in mol2.atoms:
-        a.position = a.position + offset
+    # Terminal ligands on M1
+    charge_from_terminal = _add_terminal_ligands(m1_pos, terminal_vecs_m1, 0)
 
-    combined = mol1.atoms + mol2.atoms
-    return Molecule(
-        atoms=combined,
-        metal_indices=[0, len(mol1.atoms)],
-        formula=_make_formula([a.symbol for a in combined]),
-        charge=mol1.charge + mol2.charge,
-        spin_multiplicity=mol1.spin_multiplicity,
-        geometry=mol1.geometry,
+    # Place M2
+    metal_idx_2 = len(all_atoms)
+    _add_metal(m2_pos, 2)
+
+    # Terminal ligands on M2
+    _add_terminal_ligands(m2_pos, terminal_vecs_m2, 0)
+
+    # Bridge ligands (between the two metals)
+    bridge_charge = 0
+    if bridge:
+        try:
+            bl_data = get_ligand(bridge.replace("mu-", ""))
+            bridge_charge_per = bl_data.get("charge", -1)
+        except KeyError:
+            bridge_charge_per = -1
+        bridge_charge = bridge_charge_per * n
+
+        for i in range(n):
+            bv1 = bridge_vecs_m1[i] if i < len(bridge_vecs_m1) else bridge_vecs_m1[-1]
+            bv2 = bridge_vecs_m2[i] if i < len(bridge_vecs_m2) else bridge_vecs_m2[-1]
+            # Alternate bridge ligands above/below the M-M plane
+            if i % 2 == 1:
+                bv1 = np.array([bv1[0],  bv1[1], -bv1[2]])
+                bv2 = np.array([bv2[0],  bv2[1], -bv2[2]])
+            _add_bridge_atoms(bridge, m1_pos, m2_pos, bv1, bv2, bridge_bl)
+
+    total_charge = 2 * ox + charge_from_terminal * 2 + bridge_charge
+    spin_mult    = _spin_multiplicity(metal, ox)
+
+    mol = Molecule(
+        atoms=all_atoms,
+        metal_indices=[metal_idx_1, metal_idx_2],
+        formula=_make_formula([a.symbol for a in all_atoms]),
+        charge=total_charge,
+        spin_multiplicity=spin_mult,
+        geometry=geom_canon,
         metal_symbol=metal,
         metal_ox=ox,
-        ligand_names=mol1.ligand_names,
+        ligand_names=list(terminal) + ([bridge] * n if bridge else []),
     )
+
+    clashes = _check_assembly_clashes(mol)
+    if clashes:
+        mol._clash_warnings = clashes
+
+    return mol
 
 
 def trimer(metal: str,
@@ -579,57 +752,209 @@ def trimer(metal: str,
            arrangement: str = "triangular",
            geometry: Optional[str] = None) -> Molecule:
     """
-    Build a trinuclear complex.
+    Build a trinuclear complex with bridging ligands spanning adjacent metals.
+
+    Each metal center has the bridge ligands on its M-M-facing sides, with
+    terminal ligands filling the remaining coordination sites.
 
     Parameters
     ----------
     arrangement : "triangular" or "linear"
+        Triangular: three metals at vertices of an equilateral triangle,
+        each bridged to its two neighbours (2 bridges per metal).
+        Linear: M1-M2-M3 in a line; M1 and M3 each have 1 bridge to M2,
+        M2 has 2 bridges.
     """
     if terminal is None:
         terminal = []
 
-    per_metal = list(terminal) + ([bridge, bridge] if bridge else [])
-    m1 = _build_single(metal, ox, per_metal, geometry, None)
+    geom = geometry or "oct"
 
-    bl_ref = 2.5
     if bridge:
         try:
-            bl_d = get_ligand(bridge.replace("mu-", ""))
-            donor = bl_d.get("donor_atoms", ["C"])[0]
-            bl_ref = get_bond_length(metal, ox, donor, geometry or "oct")
+            bl_data = get_ligand(bridge.replace("mu-", ""))
+            bridge_donor = bl_data.get("donor_atoms", ["O"])[0]
+            bridge_charge_per = bl_data.get("charge", -1)
         except KeyError:
-            pass
-    d_mm = 2 * bl_ref + 0.4
-
-    if arrangement == "triangular":
-        offsets = [np.zeros(3),
-                   np.array([d_mm, 0., 0.]),
-                   np.array([d_mm / 2, d_mm * np.sqrt(3) / 2, 0.])]
+            bridge_donor = "O"
+            bridge_charge_per = -1
+        bridge_bl = get_bond_length(metal, ox, bridge_donor, geom)
     else:
-        offsets = [np.zeros(3),
-                   np.array([d_mm, 0., 0.]),
-                   np.array([2 * d_mm, 0., 0.])]
+        bridge_bl = 2.5
+        bridge_donor = "O"
+        bridge_charge_per = 0
 
-    all_atoms, metal_indices, n = [], [], 0
-    for off in offsets:
-        mk = _build_single(metal, ox, per_metal, geometry, None)
-        for a in mk.atoms:
-            a.position = a.position + off
-        metal_indices.append(n)
-        all_atoms.extend(mk.atoms)
-        n += len(mk.atoms)
+    bridge_angle_deg = 105.0 if "OH" in (bridge or "") else 120.0
+    d_mm = 2.0 * bridge_bl * np.sin(np.radians(bridge_angle_deg / 2))
+    d_mm = max(d_mm, 2.8)
 
-    return Molecule(
+    # ── Metal positions ────────────────────────────────────────────────────────
+    if arrangement == "triangular":
+        # Equilateral triangle in xy-plane
+        metal_positions = [
+            np.array([0.,              0.,              0.]),
+            np.array([d_mm,            0.,              0.]),
+            np.array([d_mm / 2, d_mm * np.sqrt(3) / 2, 0.]),
+        ]
+        # For each metal, which two others is it bridged to?
+        bridge_pairs = [(0, 1), (1, 2), (2, 0)]   # edges of triangle
+        n_bridges_per_metal = 2
+    else:
+        # Linear: M0-M1-M2
+        metal_positions = [
+            np.array([0.,     0., 0.]),
+            np.array([d_mm,   0., 0.]),
+            np.array([2*d_mm, 0., 0.]),
+        ]
+        bridge_pairs = [(0, 1), (1, 2)]
+        n_bridges_per_metal = {0: 1, 1: 2, 2: 1}
+
+    cn_term = len(terminal)
+    if arrangement == "triangular":
+        cn_total = cn_term + n_bridges_per_metal
+    else:
+        cn_total = cn_term + 2   # worst case for middle metal
+    cn_total = max(cn_total, 2)
+
+    geom_canon = resolve_geometry(geom) if geom else infer_geometry(cn_total)
+    spin_mult  = _spin_multiplicity(metal, ox)
+
+    all_atoms: List[Atom] = []
+    metal_indices: List[int] = []
+    total_charge = 0
+
+    # Track placed metal indices for Molecule metadata
+    metal_atom_indices: List[int] = []
+
+    # ── Helper: place terminal ligands around one metal ───────────────────────
+    def _place_terminals_trimer(metal_pos, exclude_dirs, lig_list):
+        """
+        Place terminal ligands, choosing geometry vectors that avoid the
+        directions already occupied by bridges (exclude_dirs are unit vectors).
+        """
+        vecs_all = get_geometry_vectors(geom_canon)
+        while len(vecs_all) < cn_term + len(exclude_dirs):
+            ang = np.pi * len(vecs_all) / (cn_term + len(exclude_dirs) + 1)
+            vecs_all.append(np.array([np.sin(ang), np.cos(ang), 0.3]) /
+                            np.linalg.norm([np.sin(ang), np.cos(ang), 0.3]))
+
+        # Rotate the raw geometry vectors to align the most-bridge-like vector
+        # toward the mean bridge direction
+        if exclude_dirs:
+            mean_bridge = np.mean(exclude_dirs, axis=0)
+            if np.linalg.norm(mean_bridge) > 1e-6:
+                mean_bridge /= np.linalg.norm(mean_bridge)
+                # Align first geometry vector toward mean bridge direction
+                v0 = vecs_all[0] / np.linalg.norm(vecs_all[0])
+                R = _rodrigues_rotation(v0, mean_bridge)
+                vecs_all = [R @ v for v in vecs_all]
+
+        # Assign vecs farthest from bridge dirs to terminal ligands
+        def min_sim_to_bridges(v):
+            if not exclude_dirs:
+                return 0.0
+            return max(np.dot(v / np.linalg.norm(v), bd) for bd in exclude_dirs)
+
+        vecs_sorted = sorted(vecs_all, key=min_sim_to_bridges)
+        term_vecs = vecs_sorted[:cn_term]
+
+        charge = 0
+        for i, lig_name in enumerate(lig_list):
+            v = term_vecs[i] if i < len(term_vecs) else term_vecs[-1]
+            exp = _expand_ligand(lig_name, metal, ox, geom_canon)
+            bl  = get_bond_length(metal, ox, exp["donor_atom"], geom_canon)
+            donor_abs = metal_pos + v * bl
+            other_donors = [metal_pos + term_vecs[j] * bl
+                            for j in range(len(term_vecs)) if j != i]
+            placed = place_ligand(lig_name, donor_abs, metal_pos, other_donors)
+            for sym, pos in placed:
+                all_atoms.append(Atom(symbol=sym, position=pos,
+                                       label=f"{sym}{len(all_atoms)}"))
+            charge += exp["charge"]
+        return charge
+
+    # ── Helper: place one bridge between two metal positions ─────────────────
+    def _place_bridge_trimer(bridge_name, ma_pos, mb_pos):
+        bridge_name_base = bridge_name.replace("mu-", "")
+        mid = (ma_pos + mb_pos) / 2.0
+        m_to_m = mb_pos - ma_pos
+        m_to_m_norm = m_to_m / np.linalg.norm(m_to_m)
+        perp = np.cross(m_to_m_norm, np.array([0., 0., 1.]))
+        if np.linalg.norm(perp) < 1e-6:
+            perp = np.cross(m_to_m_norm, np.array([1., 0., 0.]))
+        perp /= np.linalg.norm(perp)
+
+        if bridge_name_base in ("OH",):
+            donor_pos = mid
+            all_atoms.append(Atom(symbol="O", position=donor_pos.copy(),
+                                   label=f"O{len(all_atoms)}"))
+            h_pos = donor_pos + 0.96 * perp
+            all_atoms.append(Atom(symbol="H", position=h_pos,
+                                   label=f"H{len(all_atoms)}"))
+        else:
+            # mu-HCOO: O1 toward ma, O2 toward mb, C above
+            o1_pos = ma_pos + m_to_m_norm * bridge_bl
+            o2_pos = mb_pos - m_to_m_norm * bridge_bl
+            mid_oo = (o1_pos + o2_pos) / 2.0
+            # Use alternating out-of-plane direction for successive bridges
+            c_dist = np.sqrt(max(1.26**2 - (np.linalg.norm(o2_pos - o1_pos)/2)**2, 0.01))
+            c_pos = mid_oo + c_dist * perp
+            h_pos = c_pos + 1.09 * perp
+            all_atoms.append(Atom(symbol="O", position=o1_pos,
+                                   label=f"O{len(all_atoms)}"))
+            all_atoms.append(Atom(symbol="O", position=o2_pos,
+                                   label=f"O{len(all_atoms)}"))
+            all_atoms.append(Atom(symbol="C", position=c_pos,
+                                   label=f"C{len(all_atoms)}"))
+            all_atoms.append(Atom(symbol="H", position=h_pos,
+                                   label=f"H{len(all_atoms)}"))
+
+    # ── Place metals ───────────────────────────────────────────────────────────
+    for mi, mpos in enumerate(metal_positions):
+        metal_atom_indices.append(len(all_atoms))
+        all_atoms.append(Atom(symbol=metal, position=mpos.copy(),
+                               label=f"{metal}{mi+1}"))
+        total_charge += ox
+
+    # ── Place bridge ligands (one per edge) ────────────────────────────────────
+    bridge_dirs_per_metal = {i: [] for i in range(3)}
+    if bridge:
+        for edge_idx, (ia, ib) in enumerate(bridge_pairs):
+            ma = metal_positions[ia]
+            mb = metal_positions[ib]
+            # Alternate out-of-plane to avoid clashes for multiple bridges
+            if edge_idx % 2 == 1:
+                # reflect z for alternating bridges
+                old_perp_z = 1.0
+            _place_bridge_trimer(bridge, ma, mb)
+            total_charge += bridge_charge_per
+            # Record bridge directions for terminal placement
+            d_ab = (mb - ma) / np.linalg.norm(mb - ma)
+            bridge_dirs_per_metal[ia].append( d_ab)
+            bridge_dirs_per_metal[ib].append(-d_ab)
+
+    # ── Place terminal ligands on each metal ──────────────────────────────────
+    for mi, mpos in enumerate(metal_positions):
+        charge = _place_terminals_trimer(mpos, bridge_dirs_per_metal[mi], terminal)
+        total_charge += charge
+
+    mol = Molecule(
         atoms=all_atoms,
-        metal_indices=metal_indices,
+        metal_indices=metal_atom_indices,
         formula=_make_formula([a.symbol for a in all_atoms]),
-        charge=m1.charge * 3,
-        spin_multiplicity=m1.spin_multiplicity,
-        geometry=m1.geometry,
+        charge=total_charge,
+        spin_multiplicity=spin_mult,
+        geometry=geom_canon,
         metal_symbol=metal,
         metal_ox=ox,
-        ligand_names=m1.ligand_names,
+        ligand_names=list(terminal) + ([bridge] * len(bridge_pairs) if bridge else []),
     )
+
+    clashes = _check_assembly_clashes(mol)
+    if clashes:
+        mol._clash_warnings = clashes
+
+    return mol
 
 
 # ── file output ───────────────────────────────────────────────────────────────
