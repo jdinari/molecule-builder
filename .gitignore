@@ -1,0 +1,13 @@
+# Python build artifacts
+*.egg-info/
+build/
+dist/
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated output
+poscar/
+*.POSCAR
+*.xyz
+ni_complexes_summary.csv
