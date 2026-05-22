@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "molbuilder"
+version = "2.0.0"
+description = "Transition metal complex builder — generates VASP POSCAR structures"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.7",
+    "rdkit>=2022.3",
+]
+readme = "README.md"
+
+[project.scripts]
+molbuilder = "molbuilder.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["molbuilder*"]
