@@ -528,7 +528,7 @@ _MIN_NONBONDED = {
     ("C",  "N"):  2.10,
     ("C",  "O"):  1.80,
     ("N",  "O"):  1.90,
-    ("O",  "O"):  2.00,
+    ("O",  "O"):  1.70,   # intra-chelate O-O in 4-membered rings ~1.8-1.9 Å
 }
 
 _MAX_BOND = {
@@ -625,3 +625,162 @@ def get_ligand_atoms_multidentate(ligand_name, smiles, donor_symbols, donor_indi
         sign = 1 if i == 0 else -1
         result.append((sym, np.array([bl*np.cos(sign*half), bl*np.sin(sign*half), 0.])))
     return result
+
+
+# ── Bidentate formate full-atom placement ─────────────────────────────────────
+
+def place_bidentate_formate(donor1_abs: np.ndarray,
+                             donor2_abs: np.ndarray,
+                             metal_abs: np.ndarray) -> List[Tuple[str, np.ndarray]]:
+    """
+    Place HCOO:bi (bidentate chelating formate) with full atom geometry.
+    Both oxygens are already positioned; this adds C and H.
+
+    Returns list of (symbol, position) for all 4 formate atoms.
+    """
+    # C is the midpoint between the two O donors + a small displacement
+    # In bidentate formate: O-C-O angle = 120°, C-O = 1.26 Å
+    # The C sits above the midpoint of O1-O2 at a distance determined by geometry
+    # O1-O2 distance in chelating formate: 2*1.26*sin(60°) = 2.18 Å
+
+    o1 = donor1_abs
+    o2 = donor2_abs
+
+    # Midpoint of O1-O2
+    mid = (o1 + o2) / 2.0
+
+    # C is perpendicular to O1-O2, away from metal
+    # Direction of O1-O2
+    o12 = o2 - o1
+    o12_norm = o12 / np.linalg.norm(o12)
+
+    # Direction away from metal (from midpoint)
+    to_metal = metal_abs - mid
+    if np.linalg.norm(to_metal) > 1e-6:
+        to_metal_norm = to_metal / np.linalg.norm(to_metal)
+    else:
+        to_metal_norm = np.array([1., 0., 0.])
+
+    # C is displaced perpendicular to O1-O2 and away from metal
+    # Find perpendicular to o12 in the plane containing metal
+    perp = np.cross(o12_norm, np.cross(o12_norm, to_metal_norm))
+    if np.linalg.norm(perp) < 1e-6:
+        # Fallback: any perpendicular
+        perp = np.cross(o12_norm, np.array([0., 0., 1.]))
+        if np.linalg.norm(perp) < 1e-6:
+            perp = np.cross(o12_norm, np.array([0., 1., 0.]))
+    perp = perp / np.linalg.norm(perp)
+
+    # C position: C-O = 1.26 Å, O-C-O = 120° -> height from midpoint
+    # h = sqrt(1.26^2 - (|O1O2|/2)^2)
+    oo_half = np.linalg.norm(o12) / 2.0
+    h = np.sqrt(max(1.26**2 - oo_half**2, 0.01))
+    # C points AWAY from metal
+    c_pos = mid - h * to_metal_norm
+
+    # H on C: C-H = 1.09 Å, O-C-H = 120°
+    # H points away from O1-O2 midpoint (away from metal side)
+    h_pos = c_pos - 1.09 * to_metal_norm
+
+    return [
+        ("O", o1.copy()),
+        ("O", o2.copy()),
+        ("C", c_pos),
+        ("H", h_pos),
+    ]
+
+
+# ── Bidentate ligand placement ────────────────────────────────────────────────
+
+# Full geometry definitions for bidentate ligands.
+# Each entry: {atoms_func: callable(v1, v2, bl1, bl2) -> [(sym, pos), ...]}
+# v1, v2 are the two geometry unit vectors from the metal;
+# bl1, bl2 are the two Ni-donor bond lengths.
+
+def _place_hcoo_bi(v1: np.ndarray, v2: np.ndarray,
+                   bl1: float, bl2: float,
+                   metal_pos: np.ndarray) -> List[Tuple[str, np.ndarray]]:
+    """
+    Place bidentate formate HCOO-κ2O,O' in absolute coordinates.
+    O-C-O = 120°, O-C = 1.26 Å, C-H = 1.09 Å.
+    The C and H sit on the bisector of the two M-O vectors.
+    """
+    o1 = metal_pos + v1 * bl1
+    o2 = metal_pos + v2 * bl2
+
+    # Midpoint direction (bisector of the chelate)
+    mid_dir = (v1 + v2)
+    if np.linalg.norm(mid_dir) < 1e-6:
+        mid_dir = np.cross(v1, np.array([0., 0., 1.]))
+    mid_dir /= np.linalg.norm(mid_dir)
+
+    # C position: on the bisector, at distance from metal such that O-C = 1.26 Å
+    # O1 is at (v1*bl1); C is at (mid_dir * d_c)
+    # |O1 - C|^2 = 1.26^2  →  solve for d_c
+    # |mid_dir*d_c - v1*bl1|^2 = 1.26^2
+    # d_c^2 - 2*(v1·mid_dir)*bl1*d_c + bl1^2 - 1.26^2 = 0
+    a_coef = 1.0
+    b_coef = -2.0 * np.dot(v1, mid_dir) * bl1
+    c_coef = bl1**2 - 1.26**2
+    disc = b_coef**2 - 4*a_coef*c_coef
+    if disc < 0:
+        disc = 0.0
+    d_c = (-b_coef + np.sqrt(disc)) / (2*a_coef)  # take the farther root
+
+    c_pos = metal_pos + mid_dir * d_c
+
+    # H position: on the bisector, beyond C
+    h_pos = c_pos + mid_dir * 1.09
+
+    return [("O", o1), ("O", o2), ("C", c_pos), ("H", h_pos)]
+
+
+def _place_hcooh_bi(v1: np.ndarray, v2: np.ndarray,
+                    bl1: float, bl2: float,
+                    metal_pos: np.ndarray) -> List[Tuple[str, np.ndarray]]:
+    """
+    Place bidentate formic acid HCOOH-κ2O,O' — same geometry as formate
+    but neutral; add the O-H on the hydroxyl oxygen.
+    """
+    base = _place_hcoo_bi(v1, v2, bl1, bl2, metal_pos)
+    # base = [O(carbonyl), O(hydroxyl), C, H(formyl)]
+    # Add H on second O (hydroxyl), pointing away from C
+    o2_pos = base[1][1]
+    c_pos  = base[2][1]
+    away   = o2_pos - c_pos
+    away  /= np.linalg.norm(away)
+    h_oh   = o2_pos + 0.972 * away
+    return base + [("H", h_oh)]
+
+
+_BIDENTATE_PLACERS = {
+    "HCOO:bi":   _place_hcoo_bi,
+    "HCOOH:bi":  _place_hcooh_bi,
+    # For other bidentate ligands without a custom placer, fall back to donor-only
+}
+
+
+def place_bidentate_ligand(ligand_name: str,
+                            v1: np.ndarray, v2: np.ndarray,
+                            bl1: float, bl2: float,
+                            metal_pos: np.ndarray) -> List[Tuple[str, np.ndarray]]:
+    """
+    Place a bidentate ligand given two geometry vectors and bond lengths.
+
+    Parameters
+    ----------
+    ligand_name : str
+    v1, v2      : unit vectors from metal to each donor
+    bl1, bl2    : Ni-donor bond lengths
+    metal_pos   : absolute position of metal
+
+    Returns
+    -------
+    List of (symbol, absolute_position)
+    """
+    placer = _BIDENTATE_PLACERS.get(ligand_name)
+    if placer is not None:
+        return placer(v1, v2, bl1, bl2, metal_pos)
+
+    # Generic fallback: just place donor atoms
+    return [("O", metal_pos + v1 * bl1), ("O", metal_pos + v2 * bl2)]
