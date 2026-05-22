@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 from molbuilder.api import (
-    build, dimer, trimer, poscar, xyz, info,
+    build, build_isomers, dimer, trimer, poscar, xyz, info,
     load_ligand_from_poscar,
 )
 from molbuilder.output.poscar_writer import poscar_to_string
@@ -165,28 +165,26 @@ Custom POSCAR ligands:
         _write(mol, out, args.xyz, args.print_poscar)
         return
 
-    # mononuclear — may return one Molecule or a list
+    # mononuclear — returns Molecule or list[Molecule]
     result = build(args.metal, ox=args.ox,
                    ligands=all_ligands,
                    geometry=args.geometry)
 
     if isinstance(result, Molecule):
-        # single isomer
         if args.print_poscar:
             print(poscar_to_string(result))
         if out:
             _write(result, out, args.xyz, False)
     else:
-        # multiple isomers
-        print(f"Found {len(result)} symmetry-distinct isomer(s).")
+        print(f"Found {len(result)} isomer(s).")
         for idx, mol in enumerate(result):
             label = getattr(mol, "label", f"isomer-{idx+1}")
-            print(f"\n── {label} ──")
-            info(mol)
             if args.print_poscar:
+                print(f"\n── {label} ──")
                 print(poscar_to_string(mol))
             if out:
-                iso_out = out.with_name(f"{out.stem}_{label}{out.suffix or '.POSCAR'}")
+                iso_out = out.with_name(
+                    f"{out.stem}_{label}{out.suffix or '.POSCAR'}")
                 _write(mol, iso_out, args.xyz, False)
 
 

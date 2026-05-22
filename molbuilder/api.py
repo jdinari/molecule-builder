@@ -380,14 +380,38 @@ def build(metal: str,
           geometry: Optional[str] = None,
           spin: Optional[int] = None):
     """
-    Build a mononuclear complex. Returns a single Molecule or list[Molecule].
+    Build a mononuclear transition-metal complex.
+
+    Automatically generates all symmetry-distinct isomers:
+      - One isomer  → returns a single Molecule
+      - Two or more → returns a list of Molecule objects
+
+    Each molecule has a .label attribute ("fac", "mer", "cis", "trans", …).
+    Isomers only differ when chemically different ligands end up in different
+    spatial arrangements — swapping identical ligands never produces a new isomer.
+
+    Parameters
+    ----------
+    metal : str
+    ox : int
+    ligands : list
+        Ligand names, SMILES strings, or CustomLigand objects.
+        Denticity modes use colon notation: "HCOO:bi", "bpy:mono".
+    geometry : str, optional
+        Auto-inferred from coordination number if omitted.
+    spin : int, optional
+        Auto-estimated if omitted.
+
+    Returns
+    -------
+    Molecule  or  list[Molecule]
     """
     if ligands is None:
         ligands = []
 
-    lig_strs    = []
-    has_custom  = False
-    has_multi   = False
+    lig_strs   = []
+    has_custom = False
+    has_multi  = False
     for l in ligands:
         if isinstance(l, CustomLigand):
             lig_strs.append(l.name)
@@ -435,6 +459,18 @@ def build(metal: str,
         mol.label = iso["label"]
         results.append(mol)
     return results
+
+
+def build_isomers(metal: str,
+                  ox: int,
+                  ligands: Optional[List] = None,
+                  geometry: Optional[str] = None,
+                  spin: Optional[int] = None) -> List[Molecule]:
+    """
+    Alias for build() that always returns a list, for convenience.
+    """
+    result = build(metal, ox=ox, ligands=ligands, geometry=geometry, spin=spin)
+    return result if isinstance(result, list) else [result]
 
 
 # ── dimer() ───────────────────────────────────────────────────────────────────
