@@ -44,9 +44,8 @@ from collections import Counter
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from molbuilder.api import build, dimer, trimer
+from molbuilder.api import build, build_isomers, dimer, trimer
 from molbuilder.core.geometry import infer_geometry
-from molbuilder.core.isomers import enumerate_isomers
 from molbuilder.output.poscar_writer import poscar_to_string
 
 # ── ligand charges ────────────────────────────────────────────────────────────
@@ -124,18 +123,16 @@ def generate_monomers(rows):
                 if ox + lig_charge != 0:
                     continue
                 for geom in geometries_for_cn(cn):
-                    iso_list = enumerate_isomers(list(combo), geom)
-                    for iso in iso_list:
+                    iso_list = build_isomers("Ni", ox=ox,
+                                             ligands=list(combo),
+                                             geometry=geom)
+                    for mol in iso_list:
                         try:
-                            mol = build("Ni", ox=ox,
-                                        ligands=iso["site_assignment"],
-                                        geometry=geom)
-                            if isinstance(mol, list):
-                                mol = mol[0]
+                            pass
                         except Exception as e:
                             print(f"  ✗ {ox_label} CN{cn} {geom} {combo}: {e}")
                             continue
-                        label = iso["label"]
+                        label = getattr(mol, "label", "only")
                         cl    = combo_label(combo)
                         path  = (OUTPUT_ROOT / "monomer" / ox_label / f"CN{cn}" /
                                  f"{safe(cl)}_{geom}_{safe(label)}.POSCAR")
@@ -165,12 +162,10 @@ def generate_monomers(rows):
                             mol = build("Ni", ox=ox,
                                         ligands=full_combo,
                                         geometry=geom)
-                            if isinstance(mol, list):
-                                mol = mol[0]
                         except Exception as e:
                             print(f"  ✗ {ox_label} CN{cn} {geom} {full_combo}: {e}")
                             continue
-                        label = getattr(mol, "label", "only")
+                        label = "only"
                         cl    = combo_label(full_combo)
                         path  = (OUTPUT_ROOT / "monomer" / ox_label / f"CN{cn}" /
                                  f"{safe(cl)}_{geom}_{safe(label)}.POSCAR")
