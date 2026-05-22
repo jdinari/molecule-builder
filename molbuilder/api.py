@@ -473,6 +473,161 @@ def build_isomers(metal: str,
     return result if isinstance(result, list) else [result]
 
 
+
+# ── shared bridge-placement helpers ──────────────────────────────────────────
+
+def _perp_basis(mm_hat: np.ndarray):
+    """Return two orthonormal vectors spanning the plane perpendicular to mm_hat."""
+    ref   = np.array([0., 0., 1.]) if abs(mm_hat[2]) < 0.9 else np.array([0., 1., 0.])
+    perp1 = np.cross(mm_hat, ref);   perp1 /= np.linalg.norm(perp1)
+    perp2 = np.cross(mm_hat, perp1); perp2 /= np.linalg.norm(perp2)
+    return perp1, perp2
+
+
+def _best_bridge_direction(mm_hat: np.ndarray,
+                           anchor: np.ndarray,
+                           placed_atoms: List,
+                           metal_symbol: str,
+                           n_total: int,
+                           bridge_idx: int,
+                           chosen_dirs: List[np.ndarray],
+                           n_samples: int = 72,
+                           extra_anchors: Optional[List[np.ndarray]] = None) -> np.ndarray:
+    """Pick the perpendicular-to-mm_hat direction with the most spatial clearance.
+
+    Parameters
+    ----------
+    mm_hat        : unit vector along M-M axis
+    anchor        : primary reference point (M-M midpoint)
+    placed_atoms  : list of Atom objects placed so far
+    metal_symbol  : skip atoms of this element when measuring clearance
+    n_total       : total number of bridges being placed in this call
+    bridge_idx    : index of the current bridge (0-based)
+    chosen_dirs   : directions already chosen for bridges 0..bridge_idx-1
+    n_samples     : angular resolution of the sweep
+    extra_anchors : additional reference points (e.g. each metal centre) —
+                    clearance is the MINIMUM across all anchors, so the chosen
+                    direction avoids crowding near every metal, not just the midpoint
+
+    Strategy
+    --------
+    1. For each of n_samples candidate directions in the perp plane, compute
+       the minimum angular clearance to all already-placed non-metal atoms,
+       measured from every anchor point (midpoint + each metal centre).
+       Taking the minimum across anchors ensures bridges avoid both the
+       region near M1 (where O1 lands) and near M2 (where O2 lands).
+    2. Enforce a minimum angular gap between this bridge and previously
+       chosen bridges in this call (spacing ≥ 360/n_total × 0.8 deg).
+    3. Return the direction with the highest minimum clearance.
+       Falls back to uniform distribution if the structure is empty.
+    """
+    perp1, perp2 = _perp_basis(mm_hat)
+
+    all_anchors = [anchor] + (extra_anchors or [])
+
+    # For each anchor, collect unit vectors to all non-metal placed atoms
+    occupied_per_anchor: List[List[np.ndarray]] = []
+    for anc in all_anchors:
+        dirs: List[np.ndarray] = []
+        for a in placed_atoms:
+            if a.symbol == metal_symbol:
+                continue
+            v = a.position - anc
+            d = np.linalg.norm(v)
+            if d > 0.1:
+                dirs.append(v / d)
+        occupied_per_anchor.append(dirs)
+
+    # Minimum angular separation we want between consecutive bridges
+    min_gap_deg = 360.0 / max(n_total, 1) * 0.8
+
+    best_phi   = 2.0 * np.pi * bridge_idx / max(n_total, 1)  # uniform fallback
+    best_score = -1.0
+
+    for k in range(n_samples):
+        phi  = 2.0 * np.pi * k / n_samples
+        cand = np.cos(phi) * perp1 + np.sin(phi) * perp2
+
+        # Clearance = minimum angular distance across ALL anchors
+        clearance = 180.0
+        for occ in occupied_per_anchor:
+            if occ:
+                dots   = [max(-1.0, min(1.0, float(np.dot(cand, o)))) for o in occ]
+                angles = [np.degrees(np.arccos(d)) for d in dots]
+                clearance = min(clearance, min(angles))
+
+        # Penalise directions too close to already-chosen bridge directions
+        for prev_dir in chosen_dirs:
+            dot   = max(-1.0, min(1.0, float(np.dot(cand, prev_dir))))
+            inter = np.degrees(np.arccos(dot))
+            if inter < min_gap_deg:
+                clearance = -1.0
+                break
+
+        if clearance > best_score:
+            best_score = clearance
+            best_phi   = phi
+
+    return np.cos(best_phi) * perp1 + np.sin(best_phi) * perp2
+
+
+def _place_oh_bridge(m1_p: np.ndarray, m2_p: np.ndarray,
+                     mm_hat: np.ndarray, d_mm: float, bl: float,
+                     perp_dir: np.ndarray) -> List[tuple]:
+    """Return [(symbol, position), ...] for a mu-OH bridge.
+
+    O is placed at the geometrically correct position equidistant from both
+    metals (displaced perpendicular to M-M by sqrt(bl²−(d_mm/2)²)).
+    H points outward along perp_dir.
+    """
+    perp_offset = np.sqrt(max(bl**2 - (d_mm / 2.0)**2, 0.0))
+    mid   = (m1_p + m2_p) / 2.0
+    o_pos = mid   + perp_offset * perp_dir
+    h_pos = o_pos + 0.960 * perp_dir
+    return [("O", o_pos), ("H", h_pos)]
+
+
+def _place_hcoo_bridge(m1_p: np.ndarray, m2_p: np.ndarray,
+                       mm_hat: np.ndarray, d_mm: float, bl: float,
+                       perp_dir: np.ndarray,
+                       target_oo: float = 2.2) -> List[tuple]:
+    """Return [(symbol, position), ...] for a mu-HCOO (syn-syn) bridge.
+
+    Both O atoms are tilted toward perp_dir at the angle that gives the
+    target O-O distance (~2.2 Å).  C bridges above the O-O midpoint.
+    """
+    cos_t = (d_mm - target_oo) / (2.0 * bl)
+    cos_t = max(min(cos_t, 0.99), -0.99)
+    sin_t = np.sqrt(1.0 - cos_t**2)
+    o1    = m1_p + bl * ( cos_t * mm_hat + sin_t * perp_dir)
+    o2    = m2_p + bl * (-cos_t * mm_hat + sin_t * perp_dir)
+    mid_oo  = (o1 + o2) / 2.0
+    oo_half = np.linalg.norm(o2 - o1) / 2.0
+    c_dist  = np.sqrt(max(1.26**2 - oo_half**2, 0.1))
+    c_pos   = mid_oo + c_dist * perp_dir
+    h_pos   = c_pos  + 1.09  * perp_dir
+    return [("O", o1), ("O", o2), ("C", c_pos), ("H", h_pos)]
+
+
+def _place_generic_bridge(m1_p: np.ndarray, m2_p: np.ndarray,
+                          bl: float, donor_sym: str) -> List[tuple]:
+    """Return [(symbol, position), ...] for a generic single-atom bridge.
+
+    Each donor is placed one bond-length from its metal along the M-M axis.
+    """
+    mid     = (m1_p + m2_p) / 2.0
+    d1 = m1_p + bl * (mid - m1_p) / np.linalg.norm(mid - m1_p)
+    d2 = m2_p + bl * (mid - m2_p) / np.linalg.norm(mid - m2_p)
+    return [(donor_sym, d1), (donor_sym, d2)]
+
+
+def _append_bridge_atoms(atoms_list: List, pairs: List[tuple]):
+    """Append (symbol, position) pairs to atoms_list as labelled Atoms."""
+    for sym, pos in pairs:
+        atoms_list.append(Atom(symbol=sym, position=pos,
+                               label=f"{sym}{len(atoms_list)}"))
+
+
 # ── dimer() ───────────────────────────────────────────────────────────────────
 
 def dimer(metal: str,
@@ -517,8 +672,11 @@ def dimer(metal: str,
         from molbuilder.core.bond_lengths import COVALENT_RADII
         d_mm = 2 * COVALENT_RADII.get(metal, 1.5) + 0.1
     else:
-        # Realistic M-X-M angle: ~105° for μ-OH, ~120° for μ-HCOO
-        mxm_angle = 105.0 if "OH" in (bridge or "") else 120.0
+        # Realistic M-X-M angle: ~105° for μ-OH, ~150° for μ-HCOO
+        # (syn-syn formate bridges in real crystal structures have Ni-Ni ~3.8 Å,
+        # corresponding to an effective M-O-M angle of ~150° when accounting
+        # for the O-C-O bridging geometry)
+        mxm_angle = 105.0 if "OH" in (bridge or "") else 150.0
         d_mm = 2.0 * bridge_bl * np.sin(np.radians(mxm_angle / 2))
         d_mm = max(d_mm, 2 * bridge_bl * 0.5)
 
@@ -598,64 +756,39 @@ def dimer(metal: str,
             charge += e["charge"]
         return charge
 
-    def add_bridge(bridge_name, m1_p, m2_p, bv1, bv2):
-        """Place one bridging ligand spanning m1 and m2."""
-        bl = get_bond_length(metal, ox, bridge_donor, geom_canon)
-        # The two donor positions — one bond length from each metal
-        d1 = m1_p + bv1 * bl   # donor bonded to M1
-        d2 = m2_p + bv2 * bl   # donor bonded to M2
+    def add_bridge(bridge_name, m1_p, m2_p, bridge_idx=0, chosen_dirs=None):
+        """Place one bridging ligand spanning m1_p and m2_p.
 
+        Uses the module-level spatial-clearance sweep to pick the perpendicular
+        direction with the most free space, so bridges avoid terminal ligands
+        and each other regardless of geometry or bridge count.
+        """
+        if chosen_dirs is None:
+            chosen_dirs = []
+
+        bl        = get_bond_length(metal, ox, bridge_donor, geom_canon)
         base_name = bridge_name.replace("mu-", "")
 
-        if base_name == "OH":
-            # Single O bridges both metals — place it at the geometric midpoint
-            # that satisfies both M-O bond lengths
-            # For equal bond lengths, midpoint is equidistant
-            o_pos = (d1 + d2) / 2.0
-            # H points perpendicular to the M-O-M plane, away from metals
-            m_m_vec  = m2_p - m1_p
-            o_m1_vec = o_pos - m1_p
-            perp = np.cross(m_m_vec, o_m1_vec)
-            if np.linalg.norm(perp) < 1e-6:
-                perp = np.array([0., 0., 1.])
-            perp /= np.linalg.norm(perp)
-            h_pos = o_pos + 0.960 * perp
-            all_atoms.append(Atom(symbol="O", position=o_pos,
-                                  label=f"O{len(all_atoms)}"))
-            all_atoms.append(Atom(symbol="H", position=h_pos,
-                                  label=f"H{len(all_atoms)}"))
+        mm_vec = m2_p - m1_p
+        d_mm   = np.linalg.norm(mm_vec)
+        mm_hat = mm_vec / d_mm
+        anchor = (m1_p + m2_p) / 2.0
 
+        perp_dir = _best_bridge_direction(
+            mm_hat, anchor, all_atoms, metal,
+            n_total=n, bridge_idx=bridge_idx, chosen_dirs=chosen_dirs,
+            extra_anchors=[m1_p, m2_p],
+        )
+
+        if base_name == "OH":
+            pairs = _place_oh_bridge(m1_p, m2_p, mm_hat, d_mm, bl, perp_dir)
         elif base_name in ("HCOO", "formate"):
-            # Bidentate bridging formate: O1 bonds M1, O2 bonds M2
-            # C sits above the O1-O2 midpoint; H on C points away
-            o1_pos = d1
-            o2_pos = d2
-            mid_oo = (o1_pos + o2_pos) / 2.0
-            # C is above the M-M plane at the correct O-C distance
-            m_m_vec = (m2_p - m1_p) / np.linalg.norm(m2_p - m1_p)
-            o1o2    = (o2_pos - o1_pos)
-            up      = np.cross(m_m_vec, o1o2)
-            if np.linalg.norm(up) < 1e-6:
-                up = np.array([0., 0., 1.])
-            up /= np.linalg.norm(up)
-            oo_half = np.linalg.norm(o1o2) / 2.0
-            c_dist  = np.sqrt(max(1.26**2 - oo_half**2, 0.01))
-            c_pos   = mid_oo + c_dist * up
-            h_pos   = c_pos  + 1.09  * up
-            all_atoms.append(Atom(symbol="O", position=o1_pos,
-                                  label=f"O{len(all_atoms)}"))
-            all_atoms.append(Atom(symbol="O", position=o2_pos,
-                                  label=f"O{len(all_atoms)}"))
-            all_atoms.append(Atom(symbol="C", position=c_pos,
-                                  label=f"C{len(all_atoms)}"))
-            all_atoms.append(Atom(symbol="H", position=h_pos,
-                                  label=f"H{len(all_atoms)}"))
+            pairs = _place_hcoo_bridge(m1_p, m2_p, mm_hat, d_mm, bl, perp_dir)
         else:
-            # Generic: just place the donor atom at both positions
-            all_atoms.append(Atom(symbol=bridge_donor, position=d1,
-                                  label=f"{bridge_donor}{len(all_atoms)}"))
-            all_atoms.append(Atom(symbol=bridge_donor, position=d2,
-                                  label=f"{bridge_donor}{len(all_atoms)}"))
+            pairs = _place_generic_bridge(m1_p, m2_p, bl, bridge_donor)
+
+        _append_bridge_atoms(all_atoms, pairs)
+        return perp_dir  # caller stores this in chosen_dirs
 
     # Place M1
     add_metal(m1_pos, f"{metal}1")
@@ -674,14 +807,11 @@ def dimer(metal: str,
         except KeyError:
             bridge_charge = -n
 
+        chosen_dirs: List[np.ndarray] = []
         for i in range(n):
-            bv1 = bridge_vecs_m1[i % len(bridge_vecs_m1)]
-            bv2 = bridge_vecs_m2[i % len(bridge_vecs_m2)]
-            # Alternate sign of z to spread bridges above/below
-            if i % 2 == 1:
-                bv1 = np.array([bv1[0], bv1[1], -bv1[2]])
-                bv2 = np.array([bv2[0], bv2[1], -bv2[2]])
-            add_bridge(bridge, m1_pos, m2_pos, bv1, bv2)
+            d = add_bridge(bridge, m1_pos, m2_pos, bridge_idx=i,
+                           chosen_dirs=chosen_dirs)
+            chosen_dirs.append(d)
 
     total_charge = 2 * ox + tc1 + tc2 + bridge_charge
 
@@ -784,61 +914,40 @@ def trimer(metal: str,
 
     # Bridge ligands between adjacent pairs
     pairs = [(0, 1), (1, 2)] if arrangement == "linear" else [(0,1),(1,2),(2,0)]
+    n_bridges_total = len(pairs)
     bridge_atoms_added = 0
-    for (i, j) in pairs:
+    chosen_dirs_trimer: List[np.ndarray] = []
+
+    for pair_idx, (i, j) in enumerate(pairs):
         if not bridge:
             continue
         mi = m_positions[i]
         mj = m_positions[j]
-        m_m_vec  = (mj - mi) / np.linalg.norm(mj - mi)
+        mm_vec  = mj - mi
+        d_mm    = np.linalg.norm(mm_vec)
+        m_m_vec = mm_vec / d_mm
+        anchor  = (mi + mj) / 2.0
 
-        if bridge.replace("mu-", "") == "OH":
-            o_pos = (mi + mj) / 2.0
-            # Find the direction in the plane perpendicular to M-M axis
-            # that maximises distance from all already-placed atoms
-            mm_ax = m_m_vec  # unit vector along M-M
-            # Collect all non-metal, non-bridge atom positions placed so far
-            placed_so_far = [a.position for a in all_atoms
-                             if a.symbol not in (metal,)]
-            # Try 36 directions in the plane perp to M-M and pick best
-            # Build two orthogonal vectors perp to mm_ax
-            ref = np.array([0., 0., 1.]) if abs(mm_ax[2]) < 0.9 else np.array([0., 1., 0.])
-            perp1 = np.cross(mm_ax, ref); perp1 /= np.linalg.norm(perp1)
-            perp2 = np.cross(mm_ax, perp1); perp2 /= np.linalg.norm(perp2)
-            best_min_d = -1
-            best_h = o_pos + 0.960 * perp2  # fallback
-            for step in range(36):
-                phi = 2 * np.pi * step / 36
-                h_dir = np.cos(phi) * perp1 + np.sin(phi) * perp2
-                h_cand = o_pos + 0.960 * h_dir
-                if placed_so_far:
-                    min_d = min(np.linalg.norm(h_cand - p) for p in placed_so_far)
-                else:
-                    min_d = 999.0
-                if min_d > best_min_d:
-                    best_min_d = min_d
-                    best_h = h_cand
-            h_pos = best_h
-            all_atoms.append(Atom(symbol="O", position=o_pos,
-                                  label=f"O{len(all_atoms)}"))
-            all_atoms.append(Atom(symbol="H", position=h_pos,
-                                  label=f"H{len(all_atoms)}"))
+        perp_dir = _best_bridge_direction(
+            m_m_vec, anchor, all_atoms, metal,
+            n_total=n_bridges_total,
+            bridge_idx=pair_idx,
+            chosen_dirs=chosen_dirs_trimer,
+            extra_anchors=[mi, mj],
+        )
+        chosen_dirs_trimer.append(perp_dir)
+
+        base_name = bridge.replace("mu-", "")
+        if base_name == "OH":
+            pairs_atoms = _place_oh_bridge(mi, mj, m_m_vec, d_mm,
+                                           bridge_bl, perp_dir)
+        elif base_name in ("HCOO", "formate"):
+            pairs_atoms = _place_hcoo_bridge(mi, mj, m_m_vec, d_mm,
+                                             bridge_bl, perp_dir)
         else:
-            # mu-HCOO: O1 toward mi, O2 toward mj
-            o1 = mi + m_m_vec  * bridge_bl
-            o2 = mj - m_m_vec  * bridge_bl
-            mid_oo = (o1 + o2) / 2.0
-            up = np.array([0., 0., 1.])
-            oo_half = np.linalg.norm(o2 - o1) / 2.0
-            c_dist  = np.sqrt(max(1.26**2 - oo_half**2, 0.01))
-            c_pos   = mid_oo + c_dist * up
-            h_pos   = c_pos  + 1.09  * up
-            all_atoms.extend([
-                Atom(symbol="O", position=o1,    label=f"O{len(all_atoms)}"),
-                Atom(symbol="O", position=o2,    label=f"O{len(all_atoms)+1}"),
-                Atom(symbol="C", position=c_pos, label=f"C{len(all_atoms)+2}"),
-                Atom(symbol="H", position=h_pos, label=f"H{len(all_atoms)+3}"),
-            ])
+            pairs_atoms = _place_generic_bridge(mi, mj, bridge_bl, bridge_donor)
+
+        _append_bridge_atoms(all_atoms, pairs_atoms)
         total_charge += bridge_charge_per
         bridge_atoms_added += 1
 
