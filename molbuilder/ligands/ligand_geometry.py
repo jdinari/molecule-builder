@@ -444,24 +444,27 @@ def place_ligand(ligand_name: str,
     # Axis from donor toward metal (local frame = +x)
     m_dir_local = np.array([1., 0., 0.])
 
+    # Virtual metal position in local frame (donor is at origin, metal at +x)
+    _metal_local = np.array([1., 0., 0.])
+
     for i, (sym, bond, parent_idx, angle, dihedral) in enumerate(atoms_def[1:], start=1):
         p_pos = local_pos[parent_idx]
 
-        if parent_idx == 0 and mdc_angle is not None:
-            # First child: M-donor-child angle = mdc_angle (true bond angle at donor)
-            # Metal is at +x in local frame.
-            # The O->M direction is +x. The O->C direction is mdc_angle away from O->M.
-            # So child_local = [cos(mdc_angle), 0, sin(mdc_angle)]
-            # e.g. mdc_angle=120 → [-0.5, 0, 0.866] — pointing away from metal ✓
+        if i == 1 and parent_idx == 0 and mdc_angle is not None:
+            # First child of the donor: use the mdc_angle shortcut.
+            # Metal is at +x in local frame; place child at mdc_angle from M-donor bond.
+            # child_local = [cos(mdc_angle), 0, sin(mdc_angle)]
+            # e.g. mdc_angle=127.75 → [-0.605, 0, 0.796] — pointing away from metal ✓
             angle_rad = np.radians(mdc_angle)
             child_local = np.array([np.cos(angle_rad), 0., np.sin(angle_rad)])
             child_pos = p_pos + bond * child_local
         else:
-            gp_pos = local_pos[atoms_def[i][2] - 1] if parent_idx > 0 else None
-            # Use grandparent
-            if parent_idx > 0:
-                gp_idx = atoms_def[i][2]  # parent_idx of this atom's parent
-                # Actually: grandparent of atom i is atoms_def[parent_idx][2]
+            # General case: use _place_atom with proper grandparent.
+            # For atoms whose parent is the donor (parent_idx == 0), use the
+            # virtual metal position as grandparent so the dihedral is well-defined.
+            if parent_idx == 0:
+                gp_pos = _metal_local  # virtual metal at +x; donor is at origin
+            elif parent_idx > 0:
                 gp_of_parent = atoms_def[parent_idx][2]
                 gp_pos = local_pos[gp_of_parent] if gp_of_parent is not None else None
             else:
