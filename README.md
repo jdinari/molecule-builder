@@ -8,11 +8,35 @@ molbuilder generates 3D structures of mononuclear, dinuclear, and trinuclear tra
 
 ## Installation
 
+**From GitHub (recommended):**
+
 ```bash
+pip install git+https://github.com/jdinari/molecule-builder.git
+```
+
+**To update to the latest version:**
+
+```bash
+pip install --upgrade git+https://github.com/jdinari/molecule-builder.git
+```
+
+**From source (if you have the files locally):**
+
+```bash
+git clone https://github.com/jdinari/molecule-builder.git
+cd molecule-builder
 pip install .
 ```
 
-Dependencies: `numpy`, `scipy`, `rdkit`
+**Editable install for development** — changes to the source take effect immediately without reinstalling:
+
+```bash
+git clone https://github.com/jdinari/molecule-builder.git
+cd molecule-builder
+pip install -e .
+```
+
+Dependencies (`numpy`, `scipy`, `rdkit`) are installed automatically.
 
 ---
 
