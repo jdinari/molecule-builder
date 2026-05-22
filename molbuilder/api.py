@@ -28,8 +28,10 @@ from molbuilder.core.bond_lengths import get_bond_length
 from molbuilder.core.isomers import enumerate_isomers
 from molbuilder.ligands.library import get_ligand, list_ligands
 from molbuilder.ligands.ligand_geometry import (
-    place_ligand, get_ligand_atoms, get_ligand_atoms_multidentate,
-    _rodrigues_rotation, check_clashes, resolve_clash_by_rotation, _clash_score,
+    place_ligand, place_bidentate_ligand,
+    get_ligand_atoms, get_ligand_atoms_multidentate,
+    _rodrigues_rotation, _rot_around_axis,
+    check_clashes, resolve_clash_by_rotation, _clash_score,
 )
 from molbuilder.output.poscar_writer import poscar_to_string
 from molbuilder.output.xyz_writer import xyz_to_string
@@ -255,8 +257,8 @@ def _expand_ligand(lig, metal: str, ox: int, geometry: str) -> dict:
         "smiles": smiles,
         "charge": lig_data["charge"],
         "denticity": lig_data["denticity"],
-        "bite_angle": lig_data.get("bite_angle", 90.0),
-        "vectors_count": lig_data["denticity"],
+        "bite_angle": lig_data.get("bite_angle", 55.0),
+        "vectors_count": 1,   # bidentate occupies ONE geometry site (bisector)
         "name": lig_name,
     }
 
@@ -320,23 +322,37 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
             vec_idx += 1
 
         elif d == 2:
-            v1 = vecs[vec_idx % len(vecs)]
-            v2 = vecs[(vec_idx + 1) % len(vecs)]
-            vec_idx += 2
-            d1, d2 = e["donor_atoms"][0], e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else e["donor_atoms"][0]
+            # Bidentate chelate: use ONE geometry vector as the bisector direction.
+            # Fan the two donor atoms out by ±(bite_angle/2) from the bisector.
+            # This places the chelate at the correct bite angle regardless of which
+            # geometry site it occupies, and avoids the impossible-geometry problem
+            # that arises from assigning two 90-deg-apart site vectors.
+            v_bisect = vecs[vec_idx % len(vecs)]
+            vec_idx += 1
+
+            d1 = e["donor_atoms"][0]
+            d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else e["donor_atoms"][0]
             bl1 = get_bond_length(metal, ox, d1, geom_canon)
             bl2 = get_bond_length(metal, ox, d2, geom_canon)
-            multi = get_ligand_atoms_multidentate(
-                e["name"], e["smiles"], e["donor_atoms"][:2],
-                e.get("donors", [0, 1])[:2],
-                bite_angle_deg=e["bite_angle"] or 90.0,
-                bond_lengths=[bl1, bl2],
-            )
-            mid = v1 + v2
-            R = _rodrigues_rotation(np.array([1., 0., 0.]),
-                                    mid / np.linalg.norm(mid)) if np.linalg.norm(mid) > 1e-6 else np.eye(3)
-            for sym, pos in multi:
-                mol_atoms.append(Atom(symbol=sym, position=R @ pos,
+            bite = e.get("bite_angle") or 55.0
+            half = np.radians(bite / 2)
+
+            # Build a rotation axis perpendicular to v_bisect and lying in a
+            # sensible plane (prefer the plane containing v_bisect and z-axis)
+            z = np.array([0., 0., 1.])
+            perp = np.cross(v_bisect, z)
+            if np.linalg.norm(perp) < 1e-6:
+                perp = np.cross(v_bisect, np.array([1., 0., 0.]))
+            perp /= np.linalg.norm(perp)
+
+            from molbuilder.ligands.ligand_geometry import _rot_around_axis
+            v1 = _rot_around_axis(perp,  half) @ v_bisect
+            v2 = _rot_around_axis(perp, -half) @ v_bisect
+
+            placed = place_bidentate_ligand(e["name"], v1, v2, bl1, bl2,
+                                            metal_pos=mol_atoms[0].position)
+            for sym, pos in placed:
+                mol_atoms.append(Atom(symbol=sym, position=pos,
                                       label=f"{sym}{len(mol_atoms)}"))
 
         else:
@@ -453,9 +469,19 @@ def build(metal: str,
             cn += 1
         geom_canon = infer_geometry(cn) if cn > 0 else "oct"
 
-    # Custom ligands can't be meaningfully permuted; skip isomer enumeration
-    if has_custom:
-        return _build_single(metal, ox, ligands, geom_canon, spin)
+    # Custom ligands or multidentate ligands: skip isomer enumeration
+    has_multidentate = any(
+        not ("=" in l or "#" in l or "(" in l or "[" in l) and
+        not isinstance(l, CustomLigand) and
+        get_ligand(str(l)).get("denticity", 1) > 1
+        for l in ligands
+        if not isinstance(l, CustomLigand)
+    )
+
+    if has_custom or has_multidentate:
+        mol = _build_single(metal, ox, ligands, geom_canon, spin)
+        mol.label = "only"
+        return mol
 
     isomers = enumerate_isomers(lig_strs, geom_canon)
 
