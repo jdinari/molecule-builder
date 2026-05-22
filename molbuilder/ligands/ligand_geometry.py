@@ -59,7 +59,7 @@ _LIGAND_DEFS = {
             # (symbol, bond, parent_idx, angle_at_parent, dihedral)
             ("O",  0.000, None,  None,   None),   # 0: donor
             ("H",  0.957,    0,  127.75, None),   # 1: first H,  free torsion
-            ("H",  0.957,    0,  127.75, 180.0),  # 2: second H, opposite torsion
+            ("H",  0.957,    0,  104.5, 180.0),  # 2: H2, gp=H1, true H-O-H angle
         ],
         "h_oh_angle": 104.5,   # stored for reference
     },
@@ -72,8 +72,8 @@ _LIGAND_DEFS = {
         "atoms": [
             ("N",  0.000, None,  None,   None),
             ("H",  1.012,    0,  111.5,  None),
-            ("H",  1.012,    0,  111.5,  120.0),
-            ("H",  1.012,    0,  111.5,  240.0),
+            ("H",  1.012,    0,  107.8,  120.0),  # H2, gp=H1, true H-N-H
+            ("H",  1.012,    0,  107.8,  240.0),  # H3, gp=H1
         ],
     },
     "ammine": None,
@@ -452,18 +452,21 @@ def place_ligand(ligand_name: str,
 
         if i == 1 and parent_idx == 0 and mdc_angle is not None:
             # First child of the donor: use the mdc_angle shortcut.
-            # Metal is at +x in local frame; place child at mdc_angle from M-donor bond.
-            # child_local = [cos(mdc_angle), 0, sin(mdc_angle)]
-            # e.g. mdc_angle=127.75 → [-0.605, 0, 0.796] — pointing away from metal ✓
             angle_rad = np.radians(mdc_angle)
             child_local = np.array([np.cos(angle_rad), 0., np.sin(angle_rad)])
             child_pos = p_pos + bond * child_local
         else:
-            # General case: use _place_atom with proper grandparent.
-            # For atoms whose parent is the donor (parent_idx == 0), use the
-            # virtual metal position as grandparent so the dihedral is well-defined.
+            # For atoms whose parent is the donor, the grandparent is:
+            #   - the previously placed sibling (index i-1) if it also has the donor as parent
+            #     (this gives the correct X-Y-X angle between siblings)
+            #   - otherwise the virtual metal at +x
             if parent_idx == 0:
-                gp_pos = _metal_local  # virtual metal at +x; donor is at origin
+                prev_parent = atoms_def[i - 1][2] if i > 1 else None
+                if prev_parent == 0:
+                    # previous atom is also a donor-child — use it as grandparent
+                    gp_pos = local_pos[i - 1]
+                else:
+                    gp_pos = _metal_local
             elif parent_idx > 0:
                 gp_of_parent = atoms_def[parent_idx][2]
                 gp_pos = local_pos[gp_of_parent] if gp_of_parent is not None else None
