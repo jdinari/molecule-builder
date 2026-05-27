@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 import numpy as np
 
 from molbuilder.core.molecule import Molecule, Atom
@@ -35,6 +35,7 @@ from molbuilder.ligands.ligand_geometry import (
 )
 from molbuilder.output.poscar_writer import poscar_to_string
 from molbuilder.output.xyz_writer import xyz_to_string
+from molbuilder.core.validation import validate, ValidationResult
 
 
 # ── spin-state estimation ────────────────────────────────────────────────────
@@ -492,34 +493,16 @@ def _best_bridge_direction(mm_hat: np.ndarray,
                            bridge_idx: int,
                            chosen_dirs: List[np.ndarray],
                            n_samples: int = 72,
-                           extra_anchors: Optional[List[np.ndarray]] = None) -> np.ndarray:
+                           extra_anchors: Optional[List[np.ndarray]] = None,
+                           blocked_positions: Optional[List[np.ndarray]] = None,
+                           phi_offset_deg: float = 0.0) -> np.ndarray:
     """Pick the perpendicular-to-mm_hat direction with the most spatial clearance.
 
     Parameters
     ----------
-    mm_hat        : unit vector along M-M axis
-    anchor        : primary reference point (M-M midpoint)
-    placed_atoms  : list of Atom objects placed so far
-    metal_symbol  : skip atoms of this element when measuring clearance
-    n_total       : total number of bridges being placed in this call
-    bridge_idx    : index of the current bridge (0-based)
-    chosen_dirs   : directions already chosen for bridges 0..bridge_idx-1
-    n_samples     : angular resolution of the sweep
-    extra_anchors : additional reference points (e.g. each metal centre) —
-                    clearance is the MINIMUM across all anchors, so the chosen
-                    direction avoids crowding near every metal, not just the midpoint
-
-    Strategy
-    --------
-    1. For each of n_samples candidate directions in the perp plane, compute
-       the minimum angular clearance to all already-placed non-metal atoms,
-       measured from every anchor point (midpoint + each metal centre).
-       Taking the minimum across anchors ensures bridges avoid both the
-       region near M1 (where O1 lands) and near M2 (where O2 lands).
-    2. Enforce a minimum angular gap between this bridge and previously
-       chosen bridges in this call (spacing ≥ 360/n_total × 0.8 deg).
-    3. Return the direction with the highest minimum clearance.
-       Falls back to uniform distribution if the structure is empty.
+    phi_offset_deg : rotate the uniform-fallback starting angle by this many
+                     degrees.  Use pair_idx * (180/nbpp) to interleave bridges
+                     from successive pairs at their shared metal centre.
     """
     perp1, perp2 = _perp_basis(mm_hat)
 
@@ -536,19 +519,25 @@ def _best_bridge_direction(mm_hat: np.ndarray,
             d = np.linalg.norm(v)
             if d > 0.1:
                 dirs.append(v / d)
+        # Also add blocked_positions as occupied directions
+        if blocked_positions:
+            for bp in blocked_positions:
+                v = bp - anc
+                d = np.linalg.norm(v)
+                if d > 0.1:
+                    dirs.append(v / d)
         occupied_per_anchor.append(dirs)
 
-    # Minimum angular separation we want between consecutive bridges
-    min_gap_deg = 360.0 / max(n_total, 1) * 0.8
+    min_gap_deg = 360.0 / max(n_total, 1) * 1.0  # exact uniform spacing prevents O-O overlap
 
-    best_phi   = 2.0 * np.pi * bridge_idx / max(n_total, 1)  # uniform fallback
+    phi_offset = np.radians(phi_offset_deg)
+    best_phi   = 2.0 * np.pi * bridge_idx / max(n_total, 1) + phi_offset
     best_score = -1.0
 
     for k in range(n_samples):
         phi  = 2.0 * np.pi * k / n_samples
         cand = np.cos(phi) * perp1 + np.sin(phi) * perp2
 
-        # Clearance = minimum angular distance across ALL anchors
         clearance = 180.0
         for occ in occupied_per_anchor:
             if occ:
@@ -556,7 +545,6 @@ def _best_bridge_direction(mm_hat: np.ndarray,
                 angles = [np.degrees(np.arccos(d)) for d in dots]
                 clearance = min(clearance, min(angles))
 
-        # Penalise directions too close to already-chosen bridge directions
         for prev_dir in chosen_dirs:
             dot   = max(-1.0, min(1.0, float(np.dot(cand, prev_dir))))
             inter = np.degrees(np.arccos(dot))
@@ -697,20 +685,14 @@ def dimer(metal: str,
     geom_canon = resolve_geometry(geometry) if geometry else infer_geometry(cn_total)
     vecs = get_geometry_vectors(geom_canon)
 
-    # ── partition geometry vectors ────────────────────────────────────────────
-    # Bridge sites: the n vectors with the LARGEST |x| component that point
-    # toward the other metal (+x for M1, -x for M2).
-    # Terminal sites: everything else.
-    vecs_by_abs_x = sorted(range(len(vecs)), key=lambda i: -abs(vecs[i][0]))
-    bridge_indices  = vecs_by_abs_x[:n]
-    terminal_indices = [i for i in range(len(vecs)) if i not in bridge_indices][:cn_term]
-
-    bridge_vecs_m1  = [vecs[i] if vecs[i][0] >= 0 else -vecs[i]
-                       for i in bridge_indices]
-    terminal_vecs_m1 = [vecs[i] for i in terminal_indices]
-    # M2 mirrors M1: flip x
-    bridge_vecs_m2  = [np.array([-v[0], v[1], v[2]]) for v in bridge_vecs_m1]
-    terminal_vecs_m2 = [np.array([-v[0], v[1], v[2]]) for v in terminal_vecs_m1]
+    # Since bridges are placed first (their positions come from clearance sweep,
+    # not the geometry vectors), we give add_terminal ALL geometry vectors and let
+    # the clearance sweep pick the best ones.  We always use octahedral vectors (6
+    # directions) for the candidate pool — lower-CN geometries like sqpy only have
+    # 5 vectors which can leave terminals with no clean site when bridges occupy 2.
+    _oct_vecs = get_geometry_vectors("oct")
+    terminal_vecs_m1 = list(_oct_vecs)
+    terminal_vecs_m2 = [np.array([-v[0], v[1], v[2]]) for v in _oct_vecs]
 
     # ── build atom list ───────────────────────────────────────────────────────
     all_atoms:    List[Atom] = []
@@ -719,40 +701,120 @@ def dimer(metal: str,
     def add_metal(pos, label):
         all_atoms.append(Atom(symbol=metal, position=pos.copy(), label=label))
 
+    # ── Build order: metals → bridges → terminals ────────────────────────────
+    # Bridges are placed first because their positions are determined purely by
+    # M-M geometry (not by terminal positions). Terminals then use the clearance
+    # sweep to find the remaining open sites, naturally avoiding bridge atoms.
+
     def add_terminal(metal_pos, vecs_local):
+        """Place terminal ligands using clearance-sorted vectors.
+
+        Tries geometry vectors in order of decreasing clearance from all
+        already-placed atoms (which now includes bridges). For each ligand,
+        tries the least-blocked vector and checks that all ligand atoms avoid
+        hard clashes with already-placed atoms.
+        """
+        from molbuilder.core.validation import _min_nonbonded_error, _is_ligand_bond
+
+        # Collect non-metal atoms already placed (includes bridges placed before us)
+        placed_ref = [a for a in all_atoms if a.symbol != metal]
+
+        def _clearance_t(v: np.ndarray) -> float:
+            v_n = v / (np.linalg.norm(v) + 1e-12)
+            if not placed_ref:
+                return 180.0
+            return min(
+                np.degrees(np.arccos(max(-1.0, min(1.0,
+                    float(np.dot(v_n, (a.position - metal_pos) /
+                                 max(np.linalg.norm(a.position - metal_pos), 1e-6)))
+                ))))
+                for a in placed_ref
+                if np.linalg.norm(a.position - metal_pos) < 5.0
+            ) if any(np.linalg.norm(a.position - metal_pos) < 5.0 for a in placed_ref) else 180.0
+
+        def _clashes(candidate: list) -> bool:
+            for sym, pos in candidate:
+                pos = np.asarray(pos)
+                for a in placed_ref:
+                    if np.linalg.norm(a.position - metal_pos) > 5.0:
+                        continue
+                    d = float(np.linalg.norm(pos - a.position))
+                    if _is_ligand_bond(sym, a.symbol, d):
+                        continue
+                    if d < _min_nonbonded_error(sym, a.symbol):
+                        return True
+            return False
+
+        vec_pool = sorted(vecs_local, key=_clearance_t, reverse=True)
         charge = 0
-        for i, lig_name in enumerate(terminal):
-            e   = _expand_ligand(lig_name, metal, ox, geom_canon)
-            bl  = get_bond_length(metal, ox, e["donor_atom"], geom_canon)
-            v   = vecs_local[i] if i < len(vecs_local) else vecs_local[-1]
+
+        for lig_name in terminal:
+            e  = _expand_ligand(lig_name, metal, ox, geom_canon)
+            bl = get_bond_length(metal, ox, e["donor_atom"], geom_canon)
+
+            placed_ok    = None
+            used_vec_idx = None
 
             if e["denticity"] == 1:
-                donor_abs = metal_pos + v * bl
-                adj = [metal_pos + vecs_local[j] * bl
-                       for j in range(len(vecs_local)) if j != i]
-                placed = place_ligand(lig_name, donor_abs, metal_pos, adj)
-                for sym, pos in placed:
-                    all_atoms.append(Atom(symbol=sym, position=pos,
-                                          label=f"{sym}{len(all_atoms)}"))
+                for vi, v in enumerate(vec_pool):
+                    donor_abs = metal_pos + v * bl
+                    adj       = [metal_pos + vec_pool[jj] * bl
+                                 for jj in range(len(vec_pool)) if jj != vi]
+                    candidate = place_ligand(lig_name, donor_abs, metal_pos, adj)
+                    if not _clashes(candidate):
+                        placed_ok = candidate; used_vec_idx = vi; break
+                if placed_ok is None:
+                    # All vectors clash — use the least-bad (already sorted best-first)
+                    v         = vec_pool[0]; used_vec_idx = 0
+                    donor_abs = metal_pos + v * bl
+                    adj       = [metal_pos + vec_pool[jj] * bl
+                                 for jj in range(len(vec_pool)) if jj != 0]
+                    placed_ok = place_ligand(lig_name, donor_abs, metal_pos, adj)
+
             elif e["denticity"] == 2:
-                bite = e.get("bite_angle") or 55.0
-                half = np.radians(bite / 2)
-                z    = np.array([0., 0., 1.])
-                perp = np.cross(v, z)
-                if np.linalg.norm(perp) < 1e-6:
-                    perp = np.cross(v, np.array([1., 0., 0.]))
-                perp /= np.linalg.norm(perp)
-                v1 = _rot_around_axis(perp,  half) @ v
-                v2 = _rot_around_axis(perp, -half) @ v
-                d1 = e["donor_atoms"][0]
-                d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else d1
-                bl1 = get_bond_length(metal, ox, d1, geom_canon)
-                bl2 = get_bond_length(metal, ox, d2, geom_canon)
-                placed = place_bidentate_ligand(lig_name, v1, v2, bl1, bl2,
-                                                metal_pos=metal_pos)
-                for sym, pos in placed:
+                for vi, v in enumerate(vec_pool):
+                    bite  = e.get("bite_angle") or 55.0
+                    half  = np.radians(bite / 2)
+                    perp  = np.cross(v, np.array([0., 0., 1.]))
+                    if np.linalg.norm(perp) < 1e-6:
+                        perp = np.cross(v, np.array([1., 0., 0.]))
+                    perp /= np.linalg.norm(perp)
+                    v1 = _rot_around_axis(perp,  half) @ v
+                    v2 = _rot_around_axis(perp, -half) @ v
+                    d1 = e["donor_atoms"][0]
+                    d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else d1
+                    candidate = place_bidentate_ligand(
+                        lig_name, v1, v2,
+                        get_bond_length(metal, ox, d1, geom_canon),
+                        get_bond_length(metal, ox, d2, geom_canon),
+                        metal_pos=metal_pos,
+                    )
+                    if not _clashes(candidate):
+                        placed_ok = candidate; used_vec_idx = vi; break
+                if placed_ok is None and vec_pool:
+                    v = vec_pool[0]; used_vec_idx = 0
+                    bite  = e.get("bite_angle") or 55.0
+                    half  = np.radians(bite / 2)
+                    perp  = np.cross(v, np.array([0., 0., 1.]))
+                    if np.linalg.norm(perp) < 1e-6:
+                        perp = np.cross(v, np.array([1., 0., 0.]))
+                    perp /= np.linalg.norm(perp)
+                    v1 = _rot_around_axis(perp,  half) @ v
+                    v2 = _rot_around_axis(perp, -half) @ v
+                    d1 = e["donor_atoms"][0]
+                    d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else d1
+                    placed_ok = place_bidentate_ligand(
+                        lig_name, v1, v2,
+                        get_bond_length(metal, ox, d1, geom_canon),
+                        get_bond_length(metal, ox, d2, geom_canon),
+                        metal_pos=metal_pos,
+                    )
+
+            if placed_ok and used_vec_idx is not None:
+                for sym, pos in placed_ok:
                     all_atoms.append(Atom(symbol=sym, position=pos,
                                           label=f"{sym}{len(all_atoms)}"))
+                vec_pool.pop(used_vec_idx)
             charge += e["charge"]
         return charge
 
@@ -790,15 +852,15 @@ def dimer(metal: str,
         _append_bridge_atoms(all_atoms, pairs)
         return perp_dir  # caller stores this in chosen_dirs
 
-    # Place M1
+    # ── Assemble: metals first, then bridges, then terminals ─────────────────
+    # Placing bridges before terminals ensures terminal clearance sweep sees
+    # the real bridge positions rather than relying on dry-run predictions.
+
+    # 1. Metals
     add_metal(m1_pos, f"{metal}1")
-    tc1 = add_terminal(m1_pos, terminal_vecs_m1)
-
-    # Place M2
     add_metal(m2_pos, f"{metal}2")
-    tc2 = add_terminal(m2_pos, terminal_vecs_m2)
 
-    # Place bridge ligands — alternate above/below M-M axis
+    # 2. Bridge ligands
     bridge_charge = 0
     if bridge:
         try:
@@ -812,6 +874,10 @@ def dimer(metal: str,
             d = add_bridge(bridge, m1_pos, m2_pos, bridge_idx=i,
                            chosen_dirs=chosen_dirs)
             chosen_dirs.append(d)
+
+    # 3. Terminal ligands (now see real bridge atoms via all_atoms)
+    tc1 = add_terminal(m1_pos, terminal_vecs_m1)
+    tc2 = add_terminal(m2_pos, terminal_vecs_m2)
 
     total_charge = 2 * ox + tc1 + tc2 + bridge_charge
 
@@ -832,6 +898,14 @@ def dimer(metal: str,
         metal_ox=ox,
         ligand_names=list(terminal) + ([bridge] * n if bridge else []),
     )
+
+    # ── validation gate ───────────────────────────────────────────────────────
+    mol.validation = validate(mol)
+    if not mol.validation.passed:
+        raise ValueError(
+            f"dimer() produced an invalid structure:\n{mol.validation.summary}"
+        )
+
     return mol
 
 
@@ -842,10 +916,17 @@ def trimer(metal: str,
            terminal: Optional[List[str]] = None,
            bridge: Optional[str] = None,
            arrangement: str = "triangular",
-           geometry: Optional[str] = None) -> Molecule:
+           geometry: Optional[str] = None,
+           n_bridges_per_pair: int = 1) -> Molecule:
     """
     Build a trinuclear complex (linear or triangular).
-    Each adjacent pair of metals is connected by the bridge ligand.
+    Each adjacent pair of metals is connected by n_bridges_per_pair bridge ligands.
+
+    Parameters
+    ----------
+    n_bridges_per_pair : int
+        Number of bridges per metal-metal pair (default 1).
+        Use 2 for e.g. Ni3(mu-HCOO)6 (2 formates per edge).
     """
     if terminal is None:
         terminal = []
@@ -886,39 +967,35 @@ def trimer(metal: str,
             np.array([-r/2, -r*np.sqrt(3)/2, 0.]),
         ]
 
-    # Build each monomer independently then assemble
     cn_term  = sum(_expand_ligand(l, metal, ox, geom_canon)["vectors_count"]
                    for l in terminal)
-    cn_total = cn_term + 2  # 2 bridge sites per metal in trimer
+    cn_total = cn_term + 2 * n_bridges_per_pair  # bridge sites per metal
     geom_use = resolve_geometry(geometry) if geometry else infer_geometry(cn_total)
 
-    all_atoms: List[Atom] = []
-    metal_indices         = []
-    total_charge          = 0
+    pairs_list = [(0, 1), (1, 2)] if arrangement == "linear" else [(0,1),(1,2),(2,0)]
 
+    # ── Assemble: metals → bridges → terminals (per metal) ───────────────────
+    # Bridges are placed first (positions determined by M-M geometry alone).
+    # Terminals are placed after, so the clearance sweep sees real bridge atoms.
+
+    all_atoms: List[Atom]  = []
+    metal_indices          = []
+    total_charge           = 0
+
+    # 1. All metals
     for k, m_pos in enumerate(m_positions):
-        # Place metal
         metal_indices.append(len(all_atoms))
         all_atoms.append(Atom(symbol=metal, position=m_pos.copy(),
                               label=f"{metal}{k+1}"))
         total_charge += ox
 
-        # Terminal ligands
-        mono = _build_single(metal, ox, terminal, geom_use, None,
-                             metal_pos=m_pos)
-        # skip the metal atom (index 0), add the rest
-        for a in mono.atoms[1:]:
-            all_atoms.append(Atom(symbol=a.symbol, position=a.position,
-                                  label=f"{a.symbol}{len(all_atoms)}"))
-        total_charge += mono.charge - ox
-
-    # Bridge ligands between adjacent pairs
-    pairs = [(0, 1), (1, 2)] if arrangement == "linear" else [(0,1),(1,2),(2,0)]
-    n_bridges_total = len(pairs)
-    bridge_atoms_added = 0
+    # 2. All bridges (n_bridges_per_pair bridges per pair)
+    bridge_atoms_added    = 0
+    n_bridges_total       = len(pairs_list) * n_bridges_per_pair
     chosen_dirs_trimer: List[np.ndarray] = []
+    global_bridge_idx     = 0   # monotonic index across all pair×bridge combinations
 
-    for pair_idx, (i, j) in enumerate(pairs):
+    for pair_idx, (i, j) in enumerate(pairs_list):
         if not bridge:
             continue
         mi = m_positions[i]
@@ -928,28 +1005,158 @@ def trimer(metal: str,
         m_m_vec = mm_vec / d_mm
         anchor  = (mi + mj) / 2.0
 
-        perp_dir = _best_bridge_direction(
-            m_m_vec, anchor, all_atoms, metal,
-            n_total=n_bridges_total,
-            bridge_idx=pair_idx,
-            chosen_dirs=chosen_dirs_trimer,
-            extra_anchors=[mi, mj],
-        )
-        chosen_dirs_trimer.append(perp_dir)
+        for b_idx in range(n_bridges_per_pair):
+            # For n_bridges_per_pair > 1, treat all other metal positions as
+            # obstacles so bridges don't direct their C/H atoms toward them.
+            blocked = None
+            if n_bridges_per_pair > 1:
+                blocked = [m_positions[k] for k in range(len(m_positions))
+                           if k != i and k != j]
 
-        base_name = bridge.replace("mu-", "")
-        if base_name == "OH":
-            pairs_atoms = _place_oh_bridge(mi, mj, m_m_vec, d_mm,
-                                           bridge_bl, perp_dir)
-        elif base_name in ("HCOO", "formate"):
-            pairs_atoms = _place_hcoo_bridge(mi, mj, m_m_vec, d_mm,
-                                             bridge_bl, perp_dir)
-        else:
-            pairs_atoms = _place_generic_bridge(mi, mj, bridge_bl, bridge_donor)
+            # Only enforce gap against bridges on the SAME pair (same perp plane)
+            # so that different pairs are free to reuse similar 3D directions.
+            same_pair_dirs = chosen_dirs_trimer[pair_idx * n_bridges_per_pair:
+                                                pair_idx * n_bridges_per_pair + b_idx]
 
-        _append_bridge_atoms(all_atoms, pairs_atoms)
-        total_charge += bridge_charge_per
-        bridge_atoms_added += 1
+            # For pairs sharing the same M-M axis (e.g. both pairs in a linear trimer
+            # have mm_hat = +x), offset each pair's starting angle by
+            # pair_idx * (180 / n_bridges_per_pair) degrees so that bridges from
+            # successive pairs interleave rather than stacking at the shared metal.
+            pair_phi_offset_deg = pair_idx * (180.0 / max(n_bridges_per_pair, 1))
+
+            perp_dir = _best_bridge_direction(
+                m_m_vec, anchor, all_atoms, metal,
+                n_total=n_bridges_per_pair,
+                bridge_idx=b_idx,
+                chosen_dirs=same_pair_dirs,
+                extra_anchors=[mi, mj],
+                blocked_positions=blocked,
+                phi_offset_deg=pair_phi_offset_deg,
+            )
+            chosen_dirs_trimer.append(perp_dir)
+            global_bridge_idx += 1
+
+            base_name = bridge.replace("mu-", "")
+            if base_name == "OH":
+                pairs_atoms = _place_oh_bridge(mi, mj, m_m_vec, d_mm,
+                                               bridge_bl, perp_dir)
+            elif base_name in ("HCOO", "formate"):
+                pairs_atoms = _place_hcoo_bridge(mi, mj, m_m_vec, d_mm,
+                                                 bridge_bl, perp_dir)
+            else:
+                pairs_atoms = _place_generic_bridge(mi, mj, bridge_bl, bridge_donor)
+
+            _append_bridge_atoms(all_atoms, pairs_atoms)
+            total_charge += bridge_charge_per
+            bridge_atoms_added += 1
+
+    # 3. Terminal ligands for each metal (now all_atoms has real bridge positions)
+    if terminal:
+        from molbuilder.core.validation import _min_nonbonded_error, _is_ligand_bond
+
+        all_vecs = get_geometry_vectors(geom_use)
+
+        for k, m_pos in enumerate(m_positions):
+            placed_ref_t = [a for a in all_atoms if a.symbol != metal]
+
+            def _cl_t(v: np.ndarray, _m=m_pos, _ref=placed_ref_t) -> float:
+                v_n = v / (np.linalg.norm(v) + 1e-12)
+                nearby = [a for a in _ref if np.linalg.norm(a.position - _m) < 5.0]
+                if not nearby:
+                    return 180.0
+                return min(
+                    np.degrees(np.arccos(max(-1.0, min(1.0,
+                        float(np.dot(v_n, (a.position - _m) /
+                                     max(np.linalg.norm(a.position - _m), 1e-6)))
+                    ))))
+                    for a in nearby
+                )
+
+            def _clashes_t(candidate: list, _m=m_pos, _ref=placed_ref_t) -> bool:
+                nearby = [a for a in _ref if np.linalg.norm(a.position - _m) < 5.0]
+                for sym, pos in candidate:
+                    pos = np.asarray(pos)
+                    for a in nearby:
+                        d = float(np.linalg.norm(pos - a.position))
+                        if _is_ligand_bond(sym, a.symbol, d):
+                            continue
+                        if d < _min_nonbonded_error(sym, a.symbol):
+                            return True
+                return False
+
+            vec_pool = sorted(all_vecs, key=_cl_t, reverse=True)
+            charge_k = 0
+
+            for lig_name in terminal:
+                e  = _expand_ligand(lig_name, metal, ox, geom_use)
+                bl = get_bond_length(metal, ox, e["donor_atom"], geom_use)
+                placed_ok = None; used_vi = None
+
+                if e["denticity"] == 1:
+                    for vi, v in enumerate(vec_pool):
+                        v_n       = v / np.linalg.norm(v)
+                        donor_abs = m_pos + v_n * bl
+                        adj       = [m_pos + vec_pool[jj] / np.linalg.norm(vec_pool[jj]) * bl
+                                     for jj in range(len(vec_pool)) if jj != vi]
+                        cand = place_ligand(lig_name, donor_abs, m_pos, adj)
+                        if not _clashes_t(cand):
+                            placed_ok = cand; used_vi = vi; break
+                    if placed_ok is None:
+                        v = vec_pool[0]; used_vi = 0
+                        donor_abs = m_pos + v / np.linalg.norm(v) * bl
+                        adj       = [m_pos + vec_pool[jj] / np.linalg.norm(vec_pool[jj]) * bl
+                                     for jj in range(len(vec_pool)) if jj != 0]
+                        placed_ok = place_ligand(lig_name, donor_abs, m_pos, adj)
+
+                elif e["denticity"] == 2:
+                    for vi, v in enumerate(vec_pool):
+                        bite  = e.get("bite_angle") or 55.0
+                        half  = np.radians(bite / 2)
+                        perp_v = np.cross(v, np.array([0., 0., 1.]))
+                        if np.linalg.norm(perp_v) < 1e-6:
+                            perp_v = np.cross(v, np.array([1., 0., 0.]))
+                        perp_v /= np.linalg.norm(perp_v)
+                        vn = v / np.linalg.norm(v)
+                        v1 = _rot_around_axis(perp_v,  half) @ vn
+                        v2 = _rot_around_axis(perp_v, -half) @ vn
+                        d1 = e["donor_atoms"][0]
+                        d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else d1
+                        cand = place_bidentate_ligand(
+                            lig_name, v1, v2,
+                            get_bond_length(metal, ox, d1, geom_use),
+                            get_bond_length(metal, ox, d2, geom_use),
+                            metal_pos=m_pos,
+                        )
+                        if not _clashes_t(cand):
+                            placed_ok = cand; used_vi = vi; break
+                    if placed_ok is None and vec_pool:
+                        v = vec_pool[0]; used_vi = 0
+                        bite  = e.get("bite_angle") or 55.0
+                        half  = np.radians(bite / 2)
+                        perp_v = np.cross(v, np.array([0., 0., 1.]))
+                        if np.linalg.norm(perp_v) < 1e-6:
+                            perp_v = np.cross(v, np.array([1., 0., 0.]))
+                        perp_v /= np.linalg.norm(perp_v)
+                        vn = v / np.linalg.norm(v)
+                        v1 = _rot_around_axis(perp_v,  half) @ vn
+                        v2 = _rot_around_axis(perp_v, -half) @ vn
+                        d1 = e["donor_atoms"][0]
+                        d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else d1
+                        placed_ok = place_bidentate_ligand(
+                            lig_name, v1, v2,
+                            get_bond_length(metal, ox, d1, geom_use),
+                            get_bond_length(metal, ox, d2, geom_use),
+                            metal_pos=m_pos,
+                        )
+
+                if placed_ok and used_vi is not None:
+                    for sym, pos in placed_ok:
+                        all_atoms.append(Atom(symbol=sym, position=pos,
+                                              label=f"{sym}{len(all_atoms)}"))
+                    vec_pool.pop(used_vi)
+                charge_k += e["charge"]
+
+            total_charge += charge_k
 
     mol = Molecule(
         atoms=all_atoms,
@@ -962,6 +1169,14 @@ def trimer(metal: str,
         metal_ox=ox,
         ligand_names=list(terminal) + ([bridge] * bridge_atoms_added if bridge else []),
     )
+
+    # ── validation gate ───────────────────────────────────────────────────────
+    mol.validation = validate(mol)
+    if not mol.validation.passed:
+        raise ValueError(
+            f"trimer() produced an invalid structure:\n{mol.validation.summary}"
+        )
+
     return mol
 
 
