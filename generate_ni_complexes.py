@@ -18,10 +18,10 @@ from molbuilder import enumerate_complexes, write_all, MULTI_BRIDGE_CASES
 
 # ── Chemistry definition ──────────────────────────────────────────────────────
 
-METAL  = "Ni"
+METAL     = "Ni"
 OX_STATES = [2, 3]
 
-# Monodentate terminal ligands (name → looked up from ligand library)
+# Monodentate terminal ligands
 LIGAND_POOL = ["HCOO", "HCOOH", "H2O", "OH"]
 
 # Bidentate chelating terminal ligands
@@ -47,8 +47,13 @@ if __name__ == "__main__":
         nuclearity         = [1, 2, 3],
         arrangements       = ["linear", "triangular"],
         cn_range           = (3, 7),
-        # max_bridges_per_pair defaults to cn_range[1]=7, covering n=4 paddle-wheel dimers
-        multi_bridge_cases = MULTI_BRIDGE_CASES,   # uses the library default
+        multi_bridge_cases = MULTI_BRIDGE_CASES,
+        # Heteroleptic dimers: both metals get different terminal ligand sets.
+        # max_terminals_per_metal=2 keeps runtime fast (~5s extra) while
+        # covering the most chemically relevant asymmetric cases.
+        # Set to 3 or None to expand the search at the cost of more runtime.
+        include_heteroleptic    = True,
+        max_terminals_per_metal = 2,
         output_root        = OUTPUT_DIR,
         verbose            = True,
     )
@@ -60,13 +65,15 @@ if __name__ == "__main__":
         fmt        = "poscar",
     )
 
-    n_mono   = sum(1 for r in rows if r["structure"] == "monomer")
-    n_dimer  = sum(1 for r in rows if r["structure"] == "dimer")
-    n_trimer = sum(1 for r in rows if r["structure"].startswith("trimer"))
+    n_mono        = sum(1 for r in rows if r["structure"] == "monomer")
+    n_dimer_sym   = sum(1 for r in rows if r["structure"] == "dimer")
+    n_dimer_het   = sum(1 for r in rows if r["structure"] == "dimer_hetero")
+    n_trimer      = sum(1 for r in rows if r["structure"].startswith("trimer"))
     print(f"\n{'='*60}")
-    print(f"  Monomers : {n_mono}")
-    print(f"  Dimers   : {n_dimer}")
-    print(f"  Trimers  : {n_trimer}")
-    print(f"  Total    : {len(rows)} POSCAR files")
-    print(f"  CSV      : {CSV_FILE}")
+    print(f"  Monomers            : {n_mono}")
+    print(f"  Dimers (symmetric)  : {n_dimer_sym}")
+    print(f"  Dimers (heteroleptic): {n_dimer_het}")
+    print(f"  Trimers             : {n_trimer}")
+    print(f"  Total               : {len(rows)} POSCAR files")
+    print(f"  CSV                 : {CSV_FILE}")
     print(f"{'='*60}")
