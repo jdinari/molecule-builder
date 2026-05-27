@@ -138,9 +138,6 @@ MULTI_BRIDGE_CASES: List[Tuple] = [
     # ── linear, 3 bridges per pair, NiII ──────────────────────────────────────
     ("linear",      3, "mu-OH",   2, [],         "triplebridge"),
     ("linear",      3, "mu-HCOO", 2, [],         "triplebridge"),
-    # ── linear, 2 bridges per pair, NiIII ─────────────────────────────────────
-    ("linear",      2, "mu-OH",   3, ["OH"],     "doublebridge"),
-    ("linear",      2, "mu-HCOO", 3, ["HCOO"],   "doublebridge"),
     # ── triangular, 2 bridges per pair, NiII ──────────────────────────────────
     # 3*Ni(II) + 3_pairs * 2_bridges * (-1) = 6 - 6 = 0 ✓   CN=4 per Ni (tet)
     ("triangular",  2, "mu-HCOO", 2, [],         "doublebridge"),

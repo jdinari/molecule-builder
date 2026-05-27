@@ -16,6 +16,18 @@ from molbuilder.combinatorics import (
     combo_label,
 )
 from molbuilder.output.writer import write_all, write_poscar, write_xyz, write_csv
+from molbuilder.exceptions import (
+    MolbuilderError,
+    InvalidLigandError,
+    GeometryError,
+    ClashError,
+    CoordinationError,
+    ChargeError,
+    ValidationError,
+)
+from molbuilder.ligands.models import Ligand
+from molbuilder.ligands.library import get_ligand_obj
+
 
 __all__ = [
     # single-structure builders
@@ -32,4 +44,9 @@ __all__ = [
     "combo_label",
     # I/O helpers
     "write_all", "write_poscar", "write_xyz", "write_csv",
+    # exceptions
+    "MolbuilderError", "InvalidLigandError", "GeometryError",
+    "ClashError", "CoordinationError", "ChargeError", "ValidationError",
+    # ligand typed models
+    "Ligand", "get_ligand_obj",
 ]
