@@ -995,60 +995,144 @@ def trimer(metal: str,
     chosen_dirs_trimer: List[np.ndarray] = []
     global_bridge_idx     = 0   # monotonic index across all pair×bridge combinations
 
-    for pair_idx, (i, j) in enumerate(pairs_list):
-        if not bridge:
-            continue
-        mi = m_positions[i]
-        mj = m_positions[j]
-        mm_vec  = mj - mi
-        d_mm    = np.linalg.norm(mm_vec)
-        m_m_vec = mm_vec / d_mm
-        anchor  = (mi + mj) / 2.0
+    # ── Special case: triangular + 2 bridges per pair ─────────────────────────
+    # A triangular arrangement has an odd 3-cycle, making it topologically
+    # impossible to assign ±z bridge directions without a pair of adjacent +z
+    # bridges meeting at the same metal and clashing.
+    #
+    # Fix: a coordinated ±α tilt scheme where the sign alternates between pairs
+    # so every shared metal receives one +α and one −α bridge from each edge.
+    # α is derived analytically per bridge type by maximising the minimum
+    # inter-edge O···O distance:
+    #
+    #   Bridge type  │  α (deg)  │  min O···O (Å)  │  geometry note
+    #   ─────────────┼───────────┼─────────────────┼─────────────────────────
+    #   mu-HCOO      │   35      │   2.20          │  O-C-O bar, target_oo=2.2
+    #   mu-OH        │   70      │   2.36          │  single-atom bridge
+    #   mu-OAc       │   35      │   2.20          │  same O-C-O geometry
+    #   mu-Cl        │   35      │   2.20          │  donor radius similar to O
+    #   (default)    │   35      │    —            │  conservative fallback
+    #
+    # Triangular nbpp=3 is NOT handled here; packing 6 bridging O donors per
+    # metal at Ni-Ni ≈ 3.2–3.6 Å gives irreducible O···O ≈ 1.3 Å regardless
+    # of tilt angle, so those cases are excluded from MULTI_BRIDGE_CASES.
 
-        for b_idx in range(n_bridges_per_pair):
-            # For n_bridges_per_pair > 1, treat all other metal positions as
-            # obstacles so bridges don't direct their C/H atoms toward them.
-            blocked = None
-            if n_bridges_per_pair > 1:
-                blocked = [m_positions[k] for k in range(len(m_positions))
-                           if k != i and k != j]
+    _TRIANGULAR_DOUBLE_BRIDGE_ALPHA: dict = {
+        "OH":      70.0,   # single-atom bridge; larger α needed to clear the shared Ni
+        "HCOO":    35.0,   # O-C-O bar; optimised for target_oo = 2.2 Å
+        "formate": 35.0,
+        "OAc":     35.0,   # same carboxylate geometry
+        "acetate": 35.0,
+        "Cl":      35.0,   # similar donor-atom radius
+        "Br":      35.0,
+        "CN":      35.0,
+    }
 
-            # Only enforce gap against bridges on the SAME pair (same perp plane)
-            # so that different pairs are free to reuse similar 3D directions.
-            same_pair_dirs = chosen_dirs_trimer[pair_idx * n_bridges_per_pair:
-                                                pair_idx * n_bridges_per_pair + b_idx]
+    _use_triangular_double_bridge = (
+        arrangement == "triangular"
+        and n_bridges_per_pair == 2
+        and bridge is not None
+    )
 
-            # For pairs sharing the same M-M axis (e.g. both pairs in a linear trimer
-            # have mm_hat = +x), offset each pair's starting angle by
-            # pair_idx * (180 / n_bridges_per_pair) degrees so that bridges from
-            # successive pairs interleave rather than stacking at the shared metal.
-            pair_phi_offset_deg = pair_idx * (180.0 / max(n_bridges_per_pair, 1))
+    if _use_triangular_double_bridge and bridge:
+        base_name_tdb = bridge.replace("mu-", "")
+        _alpha_deg  = _TRIANGULAR_DOUBLE_BRIDGE_ALPHA.get(base_name_tdb, 35.0)
+        _TILT_ALPHA = np.radians(_alpha_deg)
+        _ref_z      = np.array([0., 0., 1.])
+        for pair_idx, (i, j) in enumerate(pairs_list):
+            mi = m_positions[i]
+            mj = m_positions[j]
+            mm_vec  = mj - mi
+            d_mm_ij = np.linalg.norm(mm_vec)
+            m_m_vec = mm_vec / d_mm_ij
 
-            perp_dir = _best_bridge_direction(
-                m_m_vec, anchor, all_atoms, metal,
-                n_total=n_bridges_per_pair,
-                bridge_idx=b_idx,
-                chosen_dirs=same_pair_dirs,
-                extra_anchors=[mi, mj],
-                blocked_positions=blocked,
-                phi_offset_deg=pair_phi_offset_deg,
-            )
-            chosen_dirs_trimer.append(perp_dir)
-            global_bridge_idx += 1
+            # Build a consistent perp basis: perp1 in-plane, perp2 ≈ ±z
+            _perp1 = np.cross(m_m_vec, _ref_z)
+            if np.linalg.norm(_perp1) < 1e-6:
+                _perp1 = np.cross(m_m_vec, np.array([1., 0., 0.]))
+            _perp1 /= np.linalg.norm(_perp1)
+            _perp2  = np.cross(m_m_vec, _perp1)
+            _perp2 /= np.linalg.norm(_perp2)
+
+            # Alternating sign: pairs 0,2 → (+α, −α); pair 1 → (−α, +α).
+            # Ensures every shared metal receives one +α and one −α O per edge.
+            bridge_signs = [+1, -1] if pair_idx % 2 == 0 else [-1, +1]
 
             base_name = bridge.replace("mu-", "")
-            if base_name == "OH":
-                pairs_atoms = _place_oh_bridge(mi, mj, m_m_vec, d_mm,
-                                               bridge_bl, perp_dir)
-            elif base_name in ("HCOO", "formate"):
-                pairs_atoms = _place_hcoo_bridge(mi, mj, m_m_vec, d_mm,
-                                                 bridge_bl, perp_dir)
-            else:
-                pairs_atoms = _place_generic_bridge(mi, mj, bridge_bl, bridge_donor)
+            for b_idx, sign in enumerate(bridge_signs):
+                alpha     = sign * _TILT_ALPHA
+                perp_dir  = np.cos(alpha) * _perp1 + np.sin(alpha) * _perp2
+                perp_dir /= np.linalg.norm(perp_dir)
 
-            _append_bridge_atoms(all_atoms, pairs_atoms)
-            total_charge += bridge_charge_per
-            bridge_atoms_added += 1
+                if base_name == "OH":
+                    pairs_atoms = _place_oh_bridge(mi, mj, m_m_vec, d_mm_ij,
+                                                   bridge_bl, perp_dir)
+                elif base_name in ("HCOO", "formate"):
+                    pairs_atoms = _place_hcoo_bridge(mi, mj, m_m_vec, d_mm_ij,
+                                                     bridge_bl, perp_dir)
+                else:
+                    pairs_atoms = _place_generic_bridge(mi, mj, bridge_bl, bridge_donor)
+
+                _append_bridge_atoms(all_atoms, pairs_atoms)
+                chosen_dirs_trimer.append(perp_dir)
+                total_charge    += bridge_charge_per
+                bridge_atoms_added += 1
+
+    else:
+        for pair_idx, (i, j) in enumerate(pairs_list):
+            if not bridge:
+                continue
+            mi = m_positions[i]
+            mj = m_positions[j]
+            mm_vec  = mj - mi
+            d_mm    = np.linalg.norm(mm_vec)
+            m_m_vec = mm_vec / d_mm
+            anchor  = (mi + mj) / 2.0
+
+            for b_idx in range(n_bridges_per_pair):
+                # For n_bridges_per_pair > 1, treat all other metal positions as
+                # obstacles so bridges don't direct their C/H atoms toward them.
+                blocked = None
+                if n_bridges_per_pair > 1:
+                    blocked = [m_positions[k] for k in range(len(m_positions))
+                               if k != i and k != j]
+
+                # Only enforce gap against bridges on the SAME pair (same perp plane)
+                # so that different pairs are free to reuse similar 3D directions.
+                same_pair_dirs = chosen_dirs_trimer[pair_idx * n_bridges_per_pair:
+                                                    pair_idx * n_bridges_per_pair + b_idx]
+
+                # For pairs sharing the same M-M axis (e.g. both pairs in a linear trimer
+                # have mm_hat = +x), offset each pair's starting angle by
+                # pair_idx * (180 / n_bridges_per_pair) degrees so that bridges from
+                # successive pairs interleave rather than stacking at the shared metal.
+                pair_phi_offset_deg = pair_idx * (180.0 / max(n_bridges_per_pair, 1))
+
+                perp_dir = _best_bridge_direction(
+                    m_m_vec, anchor, all_atoms, metal,
+                    n_total=n_bridges_per_pair,
+                    bridge_idx=b_idx,
+                    chosen_dirs=same_pair_dirs,
+                    extra_anchors=[mi, mj],
+                    blocked_positions=blocked,
+                    phi_offset_deg=pair_phi_offset_deg,
+                )
+                chosen_dirs_trimer.append(perp_dir)
+                global_bridge_idx += 1
+
+                base_name = bridge.replace("mu-", "")
+                if base_name == "OH":
+                    pairs_atoms = _place_oh_bridge(mi, mj, m_m_vec, d_mm,
+                                                   bridge_bl, perp_dir)
+                elif base_name in ("HCOO", "formate"):
+                    pairs_atoms = _place_hcoo_bridge(mi, mj, m_m_vec, d_mm,
+                                                     bridge_bl, perp_dir)
+                else:
+                    pairs_atoms = _place_generic_bridge(mi, mj, bridge_bl, bridge_donor)
+
+                _append_bridge_atoms(all_atoms, pairs_atoms)
+                total_charge += bridge_charge_per
+                bridge_atoms_added += 1
 
     # 3. Terminal ligands for each metal (now all_atoms has real bridge positions)
     if terminal:

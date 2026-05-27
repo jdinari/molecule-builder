@@ -1,8 +1,33 @@
-__version__ = "2.0.0"
-"""molbuilder – transition metal complex builder → POSCAR (VASP)"""
+"""molbuilder – transition metal complex builder → POSCAR / XYZ (VASP)"""
+
+__version__ = "2.1.0"
+
 from molbuilder.api import (
     build, build_isomers, dimer, trimer, poscar, xyz, info,
     load_ligand_from_poscar, CustomLigand,
 )
-__all__ = ["build", "build_isomers", "dimer", "trimer", "poscar", "xyz", "info",
-           "load_ligand_from_poscar", "CustomLigand"]
+from molbuilder.combinatorics import (
+    enumerate_complexes,
+    enumerate_monomers,
+    enumerate_dimers,
+    enumerate_trimers,
+    MULTI_BRIDGE_CASES,
+    combo_label,
+)
+from molbuilder.output.writer import write_all, write_poscar, write_xyz, write_csv
+
+__all__ = [
+    # single-structure builders
+    "build", "build_isomers", "dimer", "trimer",
+    "poscar", "xyz", "info",
+    "load_ligand_from_poscar", "CustomLigand",
+    # combinatorial enumeration
+    "enumerate_complexes",
+    "enumerate_monomers",
+    "enumerate_dimers",
+    "enumerate_trimers",
+    "MULTI_BRIDGE_CASES",
+    "combo_label",
+    # I/O helpers
+    "write_all", "write_poscar", "write_xyz", "write_csv",
+]
