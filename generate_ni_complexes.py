@@ -47,7 +47,7 @@ if __name__ == "__main__":
         nuclearity         = [1, 2, 3],
         arrangements       = ["linear", "triangular"],
         cn_range           = (3, 7),
-        max_bridges_per_pair = 3,
+        # max_bridges_per_pair defaults to cn_range[1]=7, covering n=4 paddle-wheel dimers
         multi_bridge_cases = MULTI_BRIDGE_CASES,   # uses the library default
         output_root        = OUTPUT_DIR,
         verbose            = True,
