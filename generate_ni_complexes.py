@@ -4,9 +4,9 @@ generate_ni_complexes.py
 Generate all neutral (charge = 0) Ni(II) and Ni(III) mononuclear,
 dinuclear, and trinuclear complexes and write them to POSCAR files.
 
-This script is intentionally thin: all chemistry and enumeration logic
-lives in molbuilder.combinatorics.  Swapping the metal, adding ligands,
-or changing the output format is a one-line edit here.
+All chemistry and enumeration logic lives in molbuilder.combinatorics.
+Swapping the metal, adding ligands, or changing the output format is a
+one-line edit here.
 
 Usage
 -----
@@ -21,13 +21,8 @@ from molbuilder import enumerate_complexes, write_all, MULTI_BRIDGE_CASES
 METAL     = "Ni"
 OX_STATES = [2, 3]
 
-# Monodentate terminal ligands
 LIGAND_POOL = ["HCOO", "HCOOH", "H2O", "OH"]
-
-# Bidentate chelating terminal ligands
 BI_LIGANDS  = ["HCOO:bi"]
-
-# Bridging ligands for di- and trinuclear complexes
 BRIDGE_POOL = ["mu-OH", "mu-HCOO"]
 
 # ── Output settings ───────────────────────────────────────────────────────────
@@ -49,11 +44,12 @@ if __name__ == "__main__":
         cn_range           = (3, 7),
         multi_bridge_cases = MULTI_BRIDGE_CASES,
         # Heteroleptic dimers: both metals get different terminal ligand sets.
-        # max_terminals_per_metal=2 keeps runtime fast (~5s extra) while
-        # covering the most chemically relevant asymmetric cases.
-        # Set to 3 or None to expand the search at the cost of more runtime.
-        include_heteroleptic    = True,
-        max_terminals_per_metal = 2,
+        # max_terminals_per_metal=2 keeps runtime to ~20s.
+        include_heteroleptic         = True,
+        # Heteroleptic trimers: Ni3(HCOO)6 + water/formate on selected Ni centres.
+        # max_terminals_per_metal=1 keeps runtime reasonable (only bare + 1 ligand).
+        include_heteroleptic_trimers = True,
+        max_terminals_per_metal      = 1,
         output_root        = OUTPUT_DIR,
         verbose            = True,
     )
@@ -68,12 +64,14 @@ if __name__ == "__main__":
     n_mono        = sum(1 for r in rows if r["structure"] == "monomer")
     n_dimer_sym   = sum(1 for r in rows if r["structure"] == "dimer")
     n_dimer_het   = sum(1 for r in rows if r["structure"] == "dimer_hetero")
-    n_trimer      = sum(1 for r in rows if r["structure"].startswith("trimer"))
+    n_tri_sym     = sum(1 for r in rows if r["structure"].startswith("trimer_") and "hetero" not in r["structure"])
+    n_tri_het     = sum(1 for r in rows if "hetero" in r["structure"] and r["structure"].startswith("trimer"))
     print(f"\n{'='*60}")
-    print(f"  Monomers            : {n_mono}")
-    print(f"  Dimers (symmetric)  : {n_dimer_sym}")
-    print(f"  Dimers (heteroleptic): {n_dimer_het}")
-    print(f"  Trimers             : {n_trimer}")
-    print(f"  Total               : {len(rows)} POSCAR files")
-    print(f"  CSV                 : {CSV_FILE}")
+    print(f"  Monomers                  : {n_mono}")
+    print(f"  Dimers (symmetric)        : {n_dimer_sym}")
+    print(f"  Dimers (heteroleptic)     : {n_dimer_het}")
+    print(f"  Trimers (symmetric)       : {n_tri_sym}")
+    print(f"  Trimers (heteroleptic)    : {n_tri_het}")
+    print(f"  Total                     : {len(rows)} POSCAR files")
+    print(f"  CSV                       : {CSV_FILE}")
     print(f"{'='*60}")
