@@ -303,3 +303,100 @@ class TestBondLengths:
         ]
         for d in o_dists:
             assert 1.9 < d < 2.3, f"Unexpected Ni-O distance: {d:.3f}"
+
+
+# ── Heteroleptic trimer ───────────────────────────────────────────────────────
+
+class TestNi3HCOO6H2OHeteroleptic:
+    """Ni3(mu-HCOO)6 + H2O on one Ni only (the specific case the user requested)."""
+
+    @pytest.fixture(autouse=True)
+    def build_mol(self):
+        self.mol = trimer(
+            "Ni", ox=2, bridge="mu-HCOO", arrangement="triangular",
+            n_bridges_per_pair=2,
+            terminals_per_metal=[["H2O"], [], []],
+        )
+
+    def test_formula(self):
+        assert self.mol.formula == "C6H8Ni3O13"
+
+    def test_charge(self):
+        assert self.mol.charge == 0
+
+    def test_atom_count(self):
+        assert self.mol.num_atoms() == 30   # 27 base + 3 (O + 2H)
+
+    def test_no_geometry_warnings(self):
+        assert check_structure(self.mol) == []
+
+    def test_cn_asymmetric(self):
+        """Ni0 (with H2O) should have CN=5; Ni1 and Ni2 (bare) should have CN=4."""
+        ni_positions = metal_positions(self.mol)
+        cn_list = []
+        for pos in ni_positions:
+            donors = [a for a in self.mol.atoms
+                      if a.symbol == "O"
+                      and np.linalg.norm(a.position - pos) < 2.5]
+            cn_list.append(len(donors))
+        assert sorted(cn_list) == [4, 4, 5], \
+            f"Expected CN=[4,4,5], got {sorted(cn_list)}"
+
+    def test_distinct_from_symmetric(self):
+        sym = trimer("Ni", ox=2, terminal=["H2O"], bridge="mu-HCOO",
+                     arrangement="triangular", n_bridges_per_pair=2)
+        assert self.mol.formula != sym.formula
+        assert self.mol.num_atoms() != sym.num_atoms()
+
+    def test_json_roundtrip(self):
+        from molbuilder.core.molecule import Molecule
+        mol2 = Molecule.from_json(self.mol.to_json())
+        assert mol2.formula == self.mol.formula
+
+
+# ── Bidentate placement fixes ─────────────────────────────────────────────────
+
+class TestBidentatePlacement:
+    """Verify the bidentate fan-direction optimizer produces clash-free structures."""
+
+    def test_sqpy_h2o_hcoobi2(self):
+        from molbuilder import build_isomers
+        mol = build_isomers("Ni", ox=2,
+                            ligands=["H2O", "HCOO:bi", "HCOO:bi"],
+                            geometry="sqpy")[0]
+        assert check_structure(mol) == []
+
+    def test_tbp_h2o_hcoobi2(self):
+        from molbuilder import build_isomers
+        mol = build_isomers("Ni", ox=2,
+                            ligands=["H2O", "HCOO:bi", "HCOO:bi"],
+                            geometry="tbp")[0]
+        assert check_structure(mol) == []
+
+    def test_oct_hcoobi2_h2o2(self):
+        from molbuilder import build_isomers
+        mol = build_isomers("Ni", ox=2,
+                            ligands=["HCOO:bi", "HCOO:bi", "H2O", "H2O"],
+                            geometry="oct")[0]
+        assert check_structure(mol) == []
+
+    def test_dimer_hcoobi_mu_hcoo(self):
+        mol = dimer("Ni", ox=2, terminal=["HCOO:bi"], bridge="mu-HCOO", n=2)
+        assert check_structure(mol) == []
+
+
+# ── Monomer validation filter ─────────────────────────────────────────────────
+
+class TestMonomersAllValid:
+    """Every structure yielded by enumerate_monomers must pass hard validation."""
+
+    def test_all_monomers_pass_validation(self):
+        from molbuilder.combinatorics import enumerate_monomers
+        from molbuilder.core.validation import validate
+        for mol, row in enumerate_monomers(
+            "Ni", [2, 3], ["HCOO", "HCOOH", "H2O", "OH"], ["HCOO:bi"],
+            cn_range=(3, 7), verbose=False,
+        ):
+            result = validate(mol)
+            assert result.passed, \
+                f"Monomer {mol.formula} {row['geometry']} failed: {result.summary[:100]}"
