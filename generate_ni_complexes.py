@@ -11,6 +11,7 @@ Ligands
   HCOOH     formic acid, monodentate,      charge  0
   H2O       water,                         charge  0
   OH        hydroxide, terminal,           charge -1
+  NH3       ammonia, monodentate,          charge  0
 
 Bridging ligands (dimers/trimers only)
   mu-OH    bridging hydroxide,  charge -1
@@ -22,6 +23,7 @@ Constraints
   - Coordination number per metal: 3–7
   - Bidentate formate (HCOO:bi) counts as CN 2 per ligand
   - All symmetry-distinct isomers generated (for monodentate-only complexes)
+  - Multi-bridge trimers: linear trimers with n_bridges_per_pair = 2 or 3
 
 Output
 ------
@@ -207,6 +209,10 @@ def generate_dimers(rows):
                             mol = dimer("Ni", ox=ox,
                                         terminal=list(terminal),
                                         bridge=bridge, n=n_bridges)
+                        except ValueError as e:
+                            print(f"  ✗ dimer {ox_label} CN{cn} {n_bridges}x{bridge} "
+                                  f"term={list(terminal)}: {e}")
+                            continue
                         except Exception as e:
                             print(f"  ✗ dimer {ox_label} {n_bridges}x{bridge}: {e}")
                             continue
@@ -267,21 +273,25 @@ def generate_trimers(rows):
     print("="*60)
     n = 0
 
-    # Bridge pairs per arrangement: linear=2 (M1-M2, M2-M3), triangular=3 (all pairs)
+    # Charge formula: 3*ox + 3*tc + n_bridge_pairs * n_bridges_per_pair * bc == 0
+    # CN per metal: n_term + 2 * n_bridges_per_pair  (each metal touches 2 pairs)
+    # Note: for linear arrangement, endpoint metals touch only 1 pair, so their real
+    # CN = n_term + n_bridges_per_pair. But we use 2*nbpp for the geometry inference
+    # to avoid under-estimating for the middle metal.
+
     BRIDGE_PAIRS = {"linear": 2, "triangular": 3}
 
+    # ── standard trimers: n_bridges_per_pair = 1 ──────────────────────────────
     for ox in [2, 3]:
         ox_label = "NiII" if ox == 2 else "NiIII"
         for bridge in BRIDGE_LIGANDS:
             bc = BRIDGE_CHARGE[bridge]
             for n_term in range(0, 6):
                 # Pure monodentate terminal
-                # Charge = 3*ox (three metals) + 3*tc (terminal on each metal)
-                #        + n_bridge_pairs*bc  (varies by arrangement)
                 for terminal in (combinations_with_replacement(MONO_LIGANDS, n_term)
                                  if n_term > 0 else [()]):
-                    tc = sum(MONO_CHARGE[l] for l in terminal)
-                    cn = n_term + 2   # each metal bonds to 2 bridge ligands
+                    tc  = sum(MONO_CHARGE[l] for l in terminal)
+                    cn  = n_term + 2   # 1 bridge per pair × 2 pairs per metal
                     if not (3 <= cn <= 7):
                         continue
                     for arrangement in ["linear", "triangular"]:
@@ -293,7 +303,7 @@ def generate_trimers(rows):
                                          terminal=list(terminal),
                                          bridge=bridge,
                                          arrangement=arrangement)
-                        except Exception as e:
+                        except Exception:
                             continue
                         if mol.charge != 0:
                             continue
@@ -327,7 +337,7 @@ def generate_trimers(rows):
                                              terminal=terminal,
                                              bridge=bridge,
                                              arrangement=arrangement)
-                            except Exception as e:
+                            except Exception:
                                 continue
                             if mol.charge != 0:
                                 continue
@@ -341,6 +351,57 @@ def generate_trimers(rows):
                                   f"term={terminal}  {arrangement}  {mol.formula}")
                             rows.append(mol_to_row(mol, f"trimer_{arrangement}", ox, cn, geom,
                                                    cl, bridge, n_bp, arrangement, "only", path))
+
+    # ── multi-bridge trimers: n_bridges_per_pair = 2 or 3 ────────────────────
+    # Charge = 3*ox + 3*tc + BRIDGE_PAIRS[arr] * nbpp * bc == 0
+    # Feasible cases verified by geometry (triangular nbpp=2 with syn-syn HCOO/OH
+    # causes inter-edge O overlap; only linear nbpp=2,3 and triangular nbpp≥4 work):
+    #   - Linear, nbpp=3, OH:   3*2 + 0 + 2*3*(-1)=0, CN=6 (oct) ✓
+    #   - Linear, nbpp=3, HCOO: 3*2 + 0 + 2*3*(-1)=0, CN=6 (oct) ✓
+    #   - Triangular nbpp=2 is excluded — inter-edge O atoms always overlap
+    #     in the syn-syn geometry regardless of M-M distance.
+    MULTI_BRIDGE_CASES = [
+        # (arrangement, nbpp, bridge, ox, terminal, label_suffix)
+        # Linear, 3 bridges per pair, no terminal → Ni3(OH)6, Ni3(HCOO)6
+        ("linear", 3, "mu-OH",   2, [], "triplebridge"),
+        ("linear", 3, "mu-HCOO", 2, [], "triplebridge"),
+        # NiIII linear 2-per-pair cases that are charge-neutral
+        ("linear", 2, "mu-OH",   3, ["OH"], "doublebridge"),
+        ("linear", 2, "mu-HCOO", 3, ["HCOO"], "doublebridge"),
+    ]
+
+    for arr, nbpp, bridge, ox, terminal, suffix in MULTI_BRIDGE_CASES:
+        ox_label = "NiII" if ox == 2 else "NiIII"
+        bc    = BRIDGE_CHARGE[bridge]
+        n_bp  = BRIDGE_PAIRS[arr]
+        tc    = sum(MONO_CHARGE.get(l, BI_CHARGE.get(l, 0)) for l in terminal)
+        charge_check = 3 * ox + 3 * tc + n_bp * nbpp * bc
+        if charge_check != 0:
+            continue
+        cn = len(terminal) + 2 * nbpp
+        if not (3 <= cn <= 7):
+            continue
+        try:
+            mol = trimer("Ni", ox=ox,
+                         terminal=list(terminal),
+                         bridge=bridge,
+                         arrangement=arr,
+                         n_bridges_per_pair=nbpp)
+        except Exception as e:
+            print(f"  ✗ trimer {ox_label} {arr} {nbpp}x{bridge} term={terminal}: {e}")
+            continue
+        if mol.charge != 0:
+            continue
+        geom = GEOMETRY_FOR_CN.get(cn, "oct")
+        cl   = combo_label(list(terminal))
+        fname = f"{safe(cl)}_{nbpp}x{safe(bridge)}_{arr}.POSCAR" if cl else f"{nbpp}x{safe(bridge)}_{arr}.POSCAR"
+        path  = OUTPUT_ROOT / "trimer" / ox_label / f"CN{cn}" / fname
+        write_poscar(mol, path)
+        n += 1
+        print(f"  ✓ trimer {ox_label} CN{cn}  {nbpp}x{bridge:10s}  "
+              f"term={list(terminal)}  {arr:12s}  {mol.formula}")
+        rows.append(mol_to_row(mol, f"trimer_{arr}", ox, cn, geom,
+                               cl, bridge, n_bp * nbpp, arr, "only", path))
     return n
 
 
