@@ -112,18 +112,34 @@ LIGAND_LIBRARY = {
 
 
 def get_ligand(name: str) -> dict:
-    """Return ligand data by name, raising KeyError with helpful message."""
+    """Return ligand data dict by name, raising InvalidLigandError with helpful message.
+
+    The returned dict includes a ``_canonical_name`` key with the library key
+    that was matched (useful when an alias was resolved, e.g. "aqua" → "H2O").
+    """
     if name in LIGAND_LIBRARY:
-        return dict(LIGAND_LIBRARY[name])
+        d = dict(LIGAND_LIBRARY[name])
+        d["_canonical_name"] = name
+        return d
     lower = name.lower()
     for k, v in LIGAND_LIBRARY.items():
         if k.lower() == lower:
-            return dict(v)
+            d = dict(v)
+            d["_canonical_name"] = k
+            return d
+    from molbuilder.exceptions import InvalidLigandError
     available = ", ".join(sorted(LIGAND_LIBRARY.keys()))
-    raise KeyError(
+    raise InvalidLigandError(
         f"Unknown ligand '{name}'.\nAvailable: {available}\n"
         f"You can also pass a SMILES string directly."
     )
+
+
+def get_ligand_obj(name: str) -> "Ligand":
+    """Return a typed :class:`~molbuilder.ligands.models.Ligand` object by name."""
+    from molbuilder.ligands.models import Ligand
+    d = get_ligand(name)
+    return Ligand.from_dict(d["_canonical_name"], d)
 
 
 def list_ligands() -> list:
