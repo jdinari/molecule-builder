@@ -12,6 +12,7 @@ from molbuilder.combinatorics import (
     enumerate_dimers,
     enumerate_trimers,
     enumerate_heteroleptic_dimers,
+    enumerate_heteroleptic_trimers,
     MULTI_BRIDGE_CASES,
     combo_label,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "enumerate_dimers",
     "enumerate_trimers",
     "enumerate_heteroleptic_dimers",
+    "enumerate_heteroleptic_trimers",
     "MULTI_BRIDGE_CASES",
     "combo_label",
     # I/O helpers

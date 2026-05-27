@@ -260,6 +260,69 @@ def check_structure(mol: Molecule) -> List[str]:
 
 # ── core single-structure builder ─────────────────────────────────────────────
 
+def _best_bidentate_perp(v_bisect: np.ndarray,
+                         already_placed: List[np.ndarray],
+                         bite_half_rad: float) -> np.ndarray:
+    """
+    Find the perpendicular (fan-plane) direction for a bidentate chelate that
+    maximises the minimum distance from already-placed donor atoms.
+
+    The two donor positions are:
+        O1 = rot(perp,  +bite_half) @ v_bisect * bl
+        O2 = rot(perp,  -bite_half) @ v_bisect * bl
+
+    We sweep *perp* through 360° in the plane perpendicular to v_bisect and
+    return the direction that keeps O1 and O2 furthest from every position in
+    *already_placed*.  If *already_placed* is empty we return an arbitrary perp.
+    """
+    # Build orthonormal basis in the plane perpendicular to v_bisect
+    z    = np.array([0., 0., 1.])
+    ref  = z if abs(np.dot(v_bisect, z)) < 0.9 else np.array([1., 0., 0.])
+    p0   = np.cross(v_bisect, ref);  p0 /= np.linalg.norm(p0)
+    p1   = np.cross(v_bisect, p0);   p1 /= np.linalg.norm(p1)
+
+    if not already_placed:
+        return p0
+
+    def _donors(angle):
+        perp = np.cos(angle) * p0 + np.sin(angle) * p1
+        v1   = _rot_around_axis(perp,  bite_half_rad) @ v_bisect
+        v2   = _rot_around_axis(perp, -bite_half_rad) @ v_bisect
+        return v1, v2   # unit vectors, caller scales by bl
+
+    best_score = -1.0
+    best_angle = 0.0
+    # Coarse sweep
+    for deg in range(0, 360, 10):
+        rad = np.radians(float(deg))
+        v1, v2 = _donors(rad)
+        min_d  = min(
+            min(float(np.linalg.norm(v1 - (p / np.linalg.norm(p + 1e-12))))
+                for p in already_placed),
+            min(float(np.linalg.norm(v2 - (p / np.linalg.norm(p + 1e-12))))
+                for p in already_placed),
+        )
+        if min_d > best_score:
+            best_score = min_d
+            best_angle = rad
+    # Fine sweep ±15° around coarse best
+    for deg in range(-15, 16, 1):
+        rad = best_angle + np.radians(float(deg))
+        v1, v2 = _donors(rad)
+        min_d  = min(
+            min(float(np.linalg.norm(v1 - (p / np.linalg.norm(p + 1e-12))))
+                for p in already_placed),
+            min(float(np.linalg.norm(v2 - (p / np.linalg.norm(p + 1e-12))))
+                for p in already_placed),
+        )
+        if min_d > best_score:
+            best_score = min_d
+            best_angle = rad
+    return np.cos(best_angle) * p0 + np.sin(best_angle) * p1
+
+
+# ── core single-structure builder ─────────────────────────────────────────────
+
 def _build_single(metal: str, ox: int, ligands: List, geometry: str,
                   spin: Optional[int],
                   metal_pos: Optional[np.ndarray] = None) -> Molecule:
@@ -280,6 +343,15 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
         a = np.pi * len(vecs) / (cn + 1)
         v = np.array([np.sin(a), np.cos(a), 0.3])
         vecs.append(v / np.linalg.norm(v))
+
+    # ── Sort ligands: bidentate before monodentate ───────────────────────────
+    # Placing bidentate chelates first ensures they claim the 'best' adjacent
+    # vector pairs in geometries like TBP and OCT rather than being assigned
+    # leftover (possibly axial-only) vectors that cause fan-plane clashes.
+    # Within each denticity group the original ordering is preserved.
+    expanded = (sorted([e for e in expanded if e["denticity"] >= 2],
+                       key=lambda e: -e["denticity"])
+                + [e for e in expanded if e["denticity"] == 1])
 
     mol_atoms: List[Atom] = [
         Atom(symbol=metal, position=metal_pos.copy(), label=f"{metal}1")
@@ -321,11 +393,17 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
             bite = e.get("bite_angle") or 55.0
             half = np.radians(bite / 2)
 
-            z    = np.array([0., 0., 1.])
-            perp = np.cross(v_bisect, z)
-            if np.linalg.norm(perp) < 1e-6:
-                perp = np.cross(v_bisect, np.array([1., 0., 0.]))
-            perp /= np.linalg.norm(perp)
+            # Choose fan-plane direction to maximise clearance from already-placed atoms.
+            # Future ligand positions (remaining geometry vectors) are scaled to 2.7 Å
+            # (larger than M-donor bl ≈ 2.0 Å) to account for H atoms that will extend
+            # ~0.96 Å beyond the donor, so the bidentate fans into a genuinely open quadrant.
+            _H_REACH = 2.7   # conservative: M-O bl + O-H bl ≈ 2.06 + 0.96
+            already_dirs = (
+                [a.position - metal_pos for a in mol_atoms if a.symbol != metal]
+                + [vecs[(vec_idx + k) % len(vecs)] * _H_REACH
+                   for k in range(len(vecs) - vec_idx)]
+            )
+            perp = _best_bidentate_perp(v_bisect, already_dirs, half)
 
             v1 = _rot_around_axis(perp,  half) @ v_bisect
             v2 = _rot_around_axis(perp, -half) @ v_bisect
@@ -359,6 +437,88 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
 
     formula   = _make_formula([a.symbol for a in mol_atoms])
     spin_mult = spin if spin is not None else _spin_multiplicity(metal, ox)
+
+    # ── Post-placement H torsion re-optimisation ──────────────────────────────
+    # For each H-bearing ligand, rotate the H atoms around the M-donor axis to
+    # maximise the minimum distance to all neighbouring heavy atoms.
+    # This handles cases where the initial torsion produced by place_ligand() still
+    # leaves an H clashing because a bidentate O was placed in the same quadrant
+    # AFTER the monodentate was tentatively positioned.
+    _TORSION_STEPS = 72   # 5° resolution
+    _MIN_H_D       = 1.77  # hard O-H minimum from validation
+    heavy_pos = [a.position for a in mol_atoms if a.symbol not in ("H",) and a.symbol != metal]
+
+    # Build a map: for each H atom, which donor atom is its immediate neighbour?
+    for idx, atom in enumerate(mol_atoms):
+        if atom.symbol != "H":
+            continue
+        # Find the nearest non-H, non-metal atom (= the donor it belongs to)
+        nearest_donor = None
+        nearest_d     = 9999.
+        for a2 in mol_atoms:
+            if a2.symbol in ("H", metal) or a2 is atom:
+                continue
+            d = float(np.linalg.norm(atom.position - a2.position))
+            if d < nearest_d:
+                nearest_d = d; nearest_donor = a2
+        if nearest_donor is None:
+            continue
+
+        # Find ALL H atoms bonded to the same donor
+        donor_pos = nearest_donor.position
+        h_group   = [i for i, a in enumerate(mol_atoms)
+                     if a.symbol == "H"
+                     and float(np.linalg.norm(a.position - donor_pos)) < 1.15]
+        if not h_group or idx != h_group[0]:
+            continue   # only process once per donor (when we hit the first H)
+
+        # Rotation axis: metal → donor
+        axis = donor_pos - metal_pos
+        n    = np.linalg.norm(axis)
+        if n < 1e-6:
+            continue
+        axis /= n
+
+        # Collect current H vectors relative to donor
+        h_vecs_rel = [mol_atoms[hi].position - donor_pos for hi in h_group]
+
+        # Obstacles: all heavy atoms that are NOT bonded to this donor and are close
+        obstacles  = [a.position for a in mol_atoms
+                      if a.symbol not in ("H",) and a.symbol != metal
+                      and a is not nearest_donor
+                      and float(np.linalg.norm(a.position - donor_pos)) > 1.6]
+
+        if not obstacles:
+            continue
+
+        # Sweep torsion angles and find the best one
+        best_min_d = -1.
+        best_R     = np.eye(3)
+        for step in range(_TORSION_STEPS):
+            angle = 2.0 * np.pi * step / _TORSION_STEPS
+            c, s  = np.cos(angle), np.sin(angle)
+            ux, uy, uz = axis
+            R = np.array([
+                [c + ux*ux*(1-c),   ux*uy*(1-c) - uz*s, ux*uz*(1-c) + uy*s],
+                [uy*ux*(1-c) + uz*s, c + uy*uy*(1-c),   uy*uz*(1-c) - ux*s],
+                [uz*ux*(1-c) - uy*s, uz*uy*(1-c) + ux*s, c + uz*uz*(1-c)],
+            ])
+            rotated = [donor_pos + R @ hv for hv in h_vecs_rel]
+            min_d   = min(
+                float(np.linalg.norm(rh - ob))
+                for rh in rotated for ob in obstacles
+            )
+            if min_d > best_min_d:
+                best_min_d = min_d; best_R = R
+
+        # Only update if the best torsion is better than the current one
+        current_min_d = min(
+            float(np.linalg.norm(mol_atoms[hi].position - ob))
+            for hi in h_group for ob in obstacles
+        )
+        if best_min_d > current_min_d + 0.01:
+            for hi, hv in zip(h_group, h_vecs_rel):
+                mol_atoms[hi].position = donor_pos + best_R @ hv
 
     return Molecule(
         atoms=mol_atoms,
@@ -797,42 +957,41 @@ def dimer(metal: str,
                     placed_ok = place_ligand(lig_name, donor_abs, metal_pos, adj)
 
             elif e["denticity"] == 2:
+                d1 = e["donor_atoms"][0]
+                d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else d1
+                bl1 = get_bond_length(metal, ox, d1, geom_canon)
+                bl2 = get_bond_length(metal, ox, d2, geom_canon)
+                bite = e.get("bite_angle") or 55.0
+                half = np.radians(bite / 2)
                 for vi, v in enumerate(vec_pool):
-                    bite  = e.get("bite_angle") or 55.0
-                    half  = np.radians(bite / 2)
-                    perp  = np.cross(v, np.array([0., 0., 1.]))
-                    if np.linalg.norm(perp) < 1e-6:
-                        perp = np.cross(v, np.array([1., 0., 0.]))
-                    perp /= np.linalg.norm(perp)
+                    # Use clearance-maximising perp direction for each candidate vector
+                    _H_REACH = 2.7
+                    already_dirs = (
+                        [a.position - metal_pos for a in all_atoms if a.symbol != metal]
+                        + [vp * (_H_REACH / max(float(np.linalg.norm(vp)), 1e-9))
+                           for jj, vp in enumerate(vec_pool) if jj != vi]
+                    )
+                    perp = _best_bidentate_perp(v, already_dirs, half)
                     v1 = _rot_around_axis(perp,  half) @ v
                     v2 = _rot_around_axis(perp, -half) @ v
-                    d1 = e["donor_atoms"][0]
-                    d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else d1
                     candidate = place_bidentate_ligand(
-                        lig_name, v1, v2,
-                        get_bond_length(metal, ox, d1, geom_canon),
-                        get_bond_length(metal, ox, d2, geom_canon),
-                        metal_pos=metal_pos,
+                        lig_name, v1, v2, bl1, bl2, metal_pos=metal_pos,
                     )
                     if not _clashes(candidate):
                         placed_ok = candidate; used_vec_idx = vi; break
                 if placed_ok is None and vec_pool:
                     v = vec_pool[0]; used_vec_idx = 0
-                    bite  = e.get("bite_angle") or 55.0
-                    half  = np.radians(bite / 2)
-                    perp  = np.cross(v, np.array([0., 0., 1.]))
-                    if np.linalg.norm(perp) < 1e-6:
-                        perp = np.cross(v, np.array([1., 0., 0.]))
-                    perp /= np.linalg.norm(perp)
+                    _H_REACH = 2.7
+                    already_dirs = (
+                        [a.position - metal_pos for a in all_atoms if a.symbol != metal]
+                        + [vp * (_H_REACH / max(float(np.linalg.norm(vp)), 1e-9))
+                           for jj, vp in enumerate(vec_pool) if jj != 0]
+                    )
+                    perp = _best_bidentate_perp(v, already_dirs, half)
                     v1 = _rot_around_axis(perp,  half) @ v
                     v2 = _rot_around_axis(perp, -half) @ v
-                    d1 = e["donor_atoms"][0]
-                    d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else d1
                     placed_ok = place_bidentate_ligand(
-                        lig_name, v1, v2,
-                        get_bond_length(metal, ox, d1, geom_canon),
-                        get_bond_length(metal, ox, d2, geom_canon),
-                        metal_pos=metal_pos,
+                        lig_name, v1, v2, bl1, bl2, metal_pos=metal_pos,
                     )
 
             if placed_ok and used_vec_idx is not None:
@@ -942,19 +1101,43 @@ def trimer(metal: str,
            bridge: Optional[str] = None,
            arrangement: str = "triangular",
            geometry: Optional[str] = None,
-           n_bridges_per_pair: int = 1) -> Molecule:
+           n_bridges_per_pair: int = 1,
+           terminals_per_metal: Optional[List[Optional[List[str]]]] = None) -> Molecule:
     """
     Build a trinuclear complex (linear or triangular).
     Each adjacent pair of metals is connected by n_bridges_per_pair bridge ligands.
 
     Parameters
     ----------
+    terminal : list, optional
+        Terminal ligands applied symmetrically to *all* metal centres.
+        Ignored when *terminals_per_metal* is supplied.
+    terminals_per_metal : list of 3 lists, optional
+        Independent terminal ligand lists for each metal centre, e.g.::
+
+            terminals_per_metal=[["H2O"], [], []]
+
+        places one water on metal-0 only.  Pass ``None`` for a site to inherit
+        from *terminal*.  This overrides *terminal* for the specified sites and
+        is the recommended way to build heteroleptic trimers such as
+        Ni3(mu-HCOO)6 with terminal water on selected Ni centres.
     n_bridges_per_pair : int
         Number of bridges per metal-metal pair (default 1).
         Use 2 for e.g. Ni3(mu-HCOO)6 (2 formates per edge).
     """
     if terminal is None:
         terminal = []
+
+    # Resolve per-metal terminal lists
+    if terminals_per_metal is not None:
+        if len(terminals_per_metal) != 3:
+            raise ValueError("terminals_per_metal must have exactly 3 entries (one per metal).")
+        _tpm = [
+            list(t) if t is not None else list(terminal)
+            for t in terminals_per_metal
+        ]
+    else:
+        _tpm = [list(terminal), list(terminal), list(terminal)]
 
     geom_canon = resolve_geometry(geometry) if geometry else "oct"
 
@@ -992,8 +1175,14 @@ def trimer(metal: str,
             np.array([-r/2, -r*np.sqrt(3)/2, 0.]),
         ]
 
-    cn_term  = sum(_expand_ligand(l, metal, ox, geom_canon)["vectors_count"]
-                   for l in terminal)
+    # CN and geometry: use the MAXIMUM per-metal terminal count so that the
+    # geometry vectors cover the most-coordinated site.  (Undercoordinated sites
+    # will simply use fewer vectors from the same pool.)
+    max_term_per_metal = max(
+        sum(_expand_ligand(l, metal, ox, geom_canon)["vectors_count"] for l in t)
+        for t in _tpm
+    ) if any(_tpm) else 0
+    cn_term  = max_term_per_metal
     cn_total = cn_term + 2 * n_bridges_per_pair  # bridge sites per metal
     geom_use = resolve_geometry(geometry) if geometry else infer_geometry(cn_total)
 
@@ -1160,12 +1349,15 @@ def trimer(metal: str,
                 bridge_atoms_added += 1
 
     # 3. Terminal ligands for each metal (now all_atoms has real bridge positions)
-    if terminal:
+    if any(_tpm):
         from molbuilder.core.validation import _min_nonbonded_error, _is_ligand_bond
 
         all_vecs = get_geometry_vectors(geom_use)
 
         for k, m_pos in enumerate(m_positions):
+            terminal_k = _tpm[k]
+            if not terminal_k:
+                continue
             placed_ref_t = [a for a in all_atoms if a.symbol != metal]
 
             def _cl_t(v: np.ndarray, _m=m_pos, _ref=placed_ref_t) -> float:
@@ -1196,7 +1388,7 @@ def trimer(metal: str,
             vec_pool = sorted(all_vecs, key=_cl_t, reverse=True)
             charge_k = 0
 
-            for lig_name in terminal:
+            for lig_name in terminal_k:
                 e  = _expand_ligand(lig_name, metal, ox, geom_use)
                 bl = get_bond_length(metal, ox, e["donor_atom"], geom_use)
                 placed_ok = None; used_vi = None
@@ -1218,44 +1410,44 @@ def trimer(metal: str,
                         placed_ok = place_ligand(lig_name, donor_abs, m_pos, adj)
 
                 elif e["denticity"] == 2:
+                    d1 = e["donor_atoms"][0]
+                    d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else d1
+                    bl1 = get_bond_length(metal, ox, d1, geom_use)
+                    bl2 = get_bond_length(metal, ox, d2, geom_use)
+                    bite = e.get("bite_angle") or 55.0
+                    half = np.radians(bite / 2)
                     for vi, v in enumerate(vec_pool):
-                        bite  = e.get("bite_angle") or 55.0
-                        half  = np.radians(bite / 2)
-                        perp_v = np.cross(v, np.array([0., 0., 1.]))
-                        if np.linalg.norm(perp_v) < 1e-6:
-                            perp_v = np.cross(v, np.array([1., 0., 0.]))
-                        perp_v /= np.linalg.norm(perp_v)
+                        _H_REACH = 2.7
+                        already_dirs = (
+                            [a.position - m_pos for a in all_atoms if a.symbol != metal]
+                            + [vp * (_H_REACH / max(float(np.linalg.norm(vp)), 1e-9))
+                               for jj, vp in enumerate(vec_pool) if jj != vi]
+                        )
+                        perp_v = _best_bidentate_perp(v / np.linalg.norm(v),
+                                                      already_dirs, half)
                         vn = v / np.linalg.norm(v)
                         v1 = _rot_around_axis(perp_v,  half) @ vn
                         v2 = _rot_around_axis(perp_v, -half) @ vn
-                        d1 = e["donor_atoms"][0]
-                        d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else d1
                         cand = place_bidentate_ligand(
-                            lig_name, v1, v2,
-                            get_bond_length(metal, ox, d1, geom_use),
-                            get_bond_length(metal, ox, d2, geom_use),
-                            metal_pos=m_pos,
+                            lig_name, v1, v2, bl1, bl2, metal_pos=m_pos,
                         )
                         if not _clashes_t(cand):
                             placed_ok = cand; used_vi = vi; break
                     if placed_ok is None and vec_pool:
                         v = vec_pool[0]; used_vi = 0
-                        bite  = e.get("bite_angle") or 55.0
-                        half  = np.radians(bite / 2)
-                        perp_v = np.cross(v, np.array([0., 0., 1.]))
-                        if np.linalg.norm(perp_v) < 1e-6:
-                            perp_v = np.cross(v, np.array([1., 0., 0.]))
-                        perp_v /= np.linalg.norm(perp_v)
+                        _H_REACH = 2.7
+                        already_dirs = (
+                            [a.position - m_pos for a in all_atoms if a.symbol != metal]
+                            + [vp * (_H_REACH / max(float(np.linalg.norm(vp)), 1e-9))
+                               for jj, vp in enumerate(vec_pool) if jj != 0]
+                        )
+                        perp_v = _best_bidentate_perp(v / np.linalg.norm(v),
+                                                      already_dirs, half)
                         vn = v / np.linalg.norm(v)
                         v1 = _rot_around_axis(perp_v,  half) @ vn
                         v2 = _rot_around_axis(perp_v, -half) @ vn
-                        d1 = e["donor_atoms"][0]
-                        d2 = e["donor_atoms"][1] if len(e["donor_atoms"]) > 1 else d1
                         placed_ok = place_bidentate_ligand(
-                            lig_name, v1, v2,
-                            get_bond_length(metal, ox, d1, geom_use),
-                            get_bond_length(metal, ox, d2, geom_use),
-                            metal_pos=m_pos,
+                            lig_name, v1, v2, bl1, bl2, metal_pos=m_pos,
                         )
 
                 if placed_ok and used_vi is not None:
@@ -1266,6 +1458,72 @@ def trimer(metal: str,
                 charge_k += e["charge"]
 
             total_charge += charge_k
+
+    # ── Post-placement H torsion re-optimisation (trimer terminals) ───────────
+    # Same logic as in _build_single: rotate H-bearing terminal ligands around
+    # the M-donor axis to maximise clearance from bridge O atoms and other donors.
+    if any(_tpm):
+        _TORSION_STEPS_T = 72
+        for idx, atom in enumerate(all_atoms):
+            if atom.symbol != "H":
+                continue
+            nearest_donor = None
+            nearest_d     = 9999.
+            for a2 in all_atoms:
+                if a2.symbol in ("H", metal) or a2 is atom:
+                    continue
+                d = float(np.linalg.norm(atom.position - a2.position))
+                if d < nearest_d:
+                    nearest_d = d; nearest_donor = a2
+            if nearest_donor is None or nearest_d > 1.15:
+                continue
+            # Find the metal this donor is bonded to
+            donor_pos = nearest_donor.position
+            closest_m = min(
+                (a for a in all_atoms if a.symbol == metal),
+                key=lambda a: float(np.linalg.norm(a.position - donor_pos)),
+                default=None,
+            )
+            if closest_m is None:
+                continue
+            m_pos_t = closest_m.position
+            h_group = [i for i, a in enumerate(all_atoms)
+                       if a.symbol == "H"
+                       and float(np.linalg.norm(a.position - donor_pos)) < 1.15]
+            if not h_group or idx != h_group[0]:
+                continue
+            axis = donor_pos - m_pos_t
+            n    = np.linalg.norm(axis)
+            if n < 1e-6:
+                continue
+            axis /= n
+            h_vecs_rel = [all_atoms[hi].position - donor_pos for hi in h_group]
+            obstacles  = [a.position for a in all_atoms
+                          if a.symbol not in ("H",) and a.symbol != metal
+                          and a is not nearest_donor
+                          and float(np.linalg.norm(a.position - donor_pos)) > 1.6]
+            if not obstacles:
+                continue
+            best_min_d = -1.; best_R = np.eye(3)
+            for step in range(_TORSION_STEPS_T):
+                angle = 2.0 * np.pi * step / _TORSION_STEPS_T
+                c, s  = np.cos(angle), np.sin(angle)
+                ux, uy, uz = axis
+                R = np.array([
+                    [c + ux*ux*(1-c),   ux*uy*(1-c) - uz*s, ux*uz*(1-c) + uy*s],
+                    [uy*ux*(1-c) + uz*s, c + uy*uy*(1-c),   uy*uz*(1-c) - ux*s],
+                    [uz*ux*(1-c) - uy*s, uz*uy*(1-c) + ux*s, c + uz*uz*(1-c)],
+                ])
+                rotated = [donor_pos + R @ hv for hv in h_vecs_rel]
+                min_d   = min(float(np.linalg.norm(rh - ob))
+                              for rh in rotated for ob in obstacles)
+                if min_d > best_min_d:
+                    best_min_d = min_d; best_R = R
+            current_min_d = min(float(np.linalg.norm(all_atoms[hi].position - ob))
+                                for hi in h_group for ob in obstacles)
+            if best_min_d > current_min_d + 0.01:
+                for hi, hv in zip(h_group, h_vecs_rel):
+                    all_atoms[hi].position = donor_pos + best_R @ hv
 
     mol = Molecule(
         atoms=all_atoms,
