@@ -625,7 +625,9 @@ def dimer(metal: str,
           n: int = 2,
           geometry: Optional[str] = None,
           mm_bond: bool = False,
-          mm_distance: Optional[float] = None) -> Molecule:
+          mm_distance: Optional[float] = None,
+          terminal_m1: Optional[List[str]] = None,
+          terminal_m2: Optional[List[str]] = None) -> Molecule:
     """
     Build a dinuclear complex.
 
@@ -633,9 +635,29 @@ def dimer(metal: str,
     Each bridge ligand spans the two metals using a realistic M-X-M angle.
     Terminal ligands fill the remaining coordination sites.
     No metal-metal bond is present unless mm_bond=True.
+
+    Parameters
+    ----------
+    terminal : list, optional
+        Terminal ligands applied symmetrically to *both* metal centres.
+        Ignored if terminal_m1 / terminal_m2 are supplied.
+    terminal_m1, terminal_m2 : list, optional
+        Independent terminal ligand lists for metal 1 (−x) and metal 2 (+x).
+        Use these to build heteroleptic dimers where the two centres differ,
+        e.g. terminal_m1=["H2O"], terminal_m2=[] for Ni2(mu-HCOO)4(H2O) where
+        only one Ni carries the water ligand.
+        When supplied, *terminal* is ignored.
     """
-    if terminal is None:
-        terminal = []
+    # Resolve per-metal terminal lists
+    if terminal_m1 is not None or terminal_m2 is not None:
+        t_m1 = list(terminal_m1) if terminal_m1 is not None else []
+        t_m2 = list(terminal_m2) if terminal_m2 is not None else []
+    else:
+        t_m1 = list(terminal) if terminal is not None else []
+        t_m2 = list(t_m1)   # symmetric: same ligands on both metals
+    # Keep the old `terminal` name pointing at m1 list for backward-compat
+    # internal references (CN inference, ligand_names on Molecule).
+    terminal = t_m1
 
     geom_canon = resolve_geometry(geometry) if geometry else "oct"
 
@@ -676,10 +698,13 @@ def dimer(metal: str,
     # +x  = M1 → M2 (bridging axis)
     # +y,+z = equatorial / axial directions
 
-    # Total CN per metal
-    cn_term  = sum(_expand_ligand(l, metal, ox, geom_canon)["vectors_count"]
-                   for l in terminal)
-    cn_total = cn_term + n
+    # CN inference uses the larger of the two terminal sets so geometry vectors
+    # are not under-provisioned for whichever metal has more ligands.
+    cn_t1    = sum(_expand_ligand(l, metal, ox, geom_canon)["vectors_count"]
+                   for l in t_m1)
+    cn_t2    = sum(_expand_ligand(l, metal, ox, geom_canon)["vectors_count"]
+                   for l in t_m2)
+    cn_total = max(cn_t1, cn_t2) + n
     if cn_total == 0:
         cn_total = 6
     geom_canon = resolve_geometry(geometry) if geometry else infer_geometry(cn_total)
@@ -706,7 +731,7 @@ def dimer(metal: str,
     # M-M geometry (not by terminal positions). Terminals then use the clearance
     # sweep to find the remaining open sites, naturally avoiding bridge atoms.
 
-    def add_terminal(metal_pos, vecs_local):
+    def add_terminal(metal_pos, vecs_local, terminal_list):
         """Place terminal ligands using clearance-sorted vectors.
 
         Tries geometry vectors in order of decreasing clearance from all
@@ -748,7 +773,7 @@ def dimer(metal: str,
         vec_pool = sorted(vecs_local, key=_clearance_t, reverse=True)
         charge = 0
 
-        for lig_name in terminal:
+        for lig_name in terminal_list:
             e  = _expand_ligand(lig_name, metal, ox, geom_canon)
             bl = get_bond_length(metal, ox, e["donor_atom"], geom_canon)
 
@@ -876,8 +901,8 @@ def dimer(metal: str,
             chosen_dirs.append(d)
 
     # 3. Terminal ligands (now see real bridge atoms via all_atoms)
-    tc1 = add_terminal(m1_pos, terminal_vecs_m1)
-    tc2 = add_terminal(m2_pos, terminal_vecs_m2)
+    tc1 = add_terminal(m1_pos, terminal_vecs_m1, t_m1)
+    tc2 = add_terminal(m2_pos, terminal_vecs_m2, t_m2)
 
     total_charge = 2 * ox + tc1 + tc2 + bridge_charge
 
@@ -888,7 +913,7 @@ def dimer(metal: str,
             if not isinstance(l, CustomLigand) and
                (lambda e: e["denticity"] == 1)(_expand_ligand(l, metal, ox, geom_canon))
             else 2
-            for l in terminal
+            for l in t_m1
         )],
         formula=_make_formula([a.symbol for a in all_atoms]),
         charge=total_charge,
@@ -896,7 +921,7 @@ def dimer(metal: str,
         geometry=geom_canon,
         metal_symbol=metal,
         metal_ox=ox,
-        ligand_names=list(terminal) + ([bridge] * n if bridge else []),
+        ligand_names=list(t_m1) + list(t_m2) + ([bridge] * n if bridge else []),
     )
 
     # ── validation gate ───────────────────────────────────────────────────────

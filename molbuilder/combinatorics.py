@@ -241,13 +241,19 @@ def enumerate_dimers(
     bridge_ligands: Sequence[str],
     bi_ligands: Sequence[str] = (),
     cn_range: Tuple[int, int] = (3, 7),
-    max_bridges: int = 3,
+    max_bridges: Optional[int] = None,
     geometry_for_cn: Optional[Dict[int, str]] = None,
     output_root: Optional[Path] = None,
     verbose: bool = True,
 ) -> Iterator[Tuple[Any, Dict[str, Any]]]:
-    """Yield (Molecule, row_dict) for every charge-neutral dimer."""
+    """Yield (Molecule, row_dict) for every charge-neutral dimer.
+
+    max_bridges defaults to cn_range[1] so that fully-bridged dimers such as
+    Ni2(mu-HCOO)4 (n=4, no terminals, CN=4) are always included.
+    Pass an explicit integer to cap earlier.
+    """
     cn_min, cn_max = cn_range
+    _max_b        = max_bridges if max_bridges is not None else cn_max
     mono_charge   = {l: _ligand_charge(l) for l in mono_ligands}
     bridge_charge = {b: _ligand_charge(b) for b in bridge_ligands}
     bi_charge     = {l: _ligand_charge(l) for l in bi_ligands}
@@ -257,7 +263,7 @@ def enumerate_dimers(
         oxl = _ox_label(metal, ox)
         for bridge in bridge_ligands:
             bc = bridge_charge[bridge]
-            for nb in range(1, max_bridges + 1):
+            for nb in range(1, _max_b + 1):
 
                 # pure monodentate terminals
                 for n_term in range(0, cn_max - nb + 1):
@@ -273,10 +279,7 @@ def enumerate_dimers(
                         try:
                             mol = dimer(metal, ox=ox, terminal=list(terminal),
                                         bridge=bridge, n=nb)
-                        except Exception as e:
-                            if verbose:
-                                print(f"  ✗ dimer {oxl} CN{cn} "
-                                      f"{nb}x{bridge} term={list(terminal)}: {e}")
+                        except Exception:
                             continue
                         if mol.charge != 0:
                             continue
@@ -326,6 +329,121 @@ def enumerate_dimers(
                                     print(f"  ✓ dimer  {oxl} CN{cn}  "
                                           f"{nb}x{bridge:10s}  "
                                           f"term={terminal}  {mol.formula}")
+                                yield mol, row
+
+
+# ── HETEROLEPTIC DIMERS ───────────────────────────────────────────────────────
+
+def enumerate_heteroleptic_dimers(
+    metal: str,
+    ox_states: Sequence[int],
+    mono_ligands: Sequence[str],
+    bridge_ligands: Sequence[str],
+    bi_ligands: Sequence[str] = (),
+    cn_range: Tuple[int, int] = (3, 7),
+    max_bridges: Optional[int] = None,
+    geometry_for_cn: Optional[Dict[int, str]] = None,
+    output_root: Optional[Path] = None,
+    verbose: bool = True,
+) -> Iterator[Tuple[Any, Dict[str, Any]]]:
+    """
+    Yield (Molecule, row_dict) for every charge-neutral *heteroleptic* dimer —
+    i.e. dimers where the two metal centres carry *different* terminal ligand sets.
+
+    The symmetric (homotopic) cases are deliberately excluded here; they are
+    already covered by enumerate_dimers().
+
+    A pair (t_m1, t_m2) is considered distinct from (t_m2, t_m1) only if the
+    two multisets differ; the canonical form with t_m1 ≤ t_m2 (lexicographic on
+    sorted tuples) is generated once.  The POSCAR filename encodes both sides:
+    ``<m1_combo>__<m2_combo>_<nb>x<bridge>.POSCAR``.
+    """
+    cn_min, cn_max = cn_range
+    _max_b        = max_bridges if max_bridges is not None else cn_max
+    mono_charge   = {l: _ligand_charge(l) for l in mono_ligands}
+    bridge_charge = {b: _ligand_charge(b) for b in bridge_ligands}
+    bi_charge     = {l: _ligand_charge(l) for l in bi_ligands}
+    bi_cn_map     = {l: _ligand_cn(l)     for l in bi_ligands}
+
+    # All terminal ligands (mono + bi) available per metal
+    all_terminals = list(mono_ligands) + list(bi_ligands)
+
+    # Deduplication: track canonical (sorted_t1, sorted_t2, nb, bridge) tuples
+    _seen: set = set()
+
+    for ox in ox_states:
+        oxl = _ox_label(metal, ox)
+        for bridge in bridge_ligands:
+            bc = bridge_charge[bridge]
+            for nb in range(1, _max_b + 1):
+
+                # Enumerate all (t_m1, t_m2) pairs where the multisets differ.
+                for n1 in range(0, cn_max - nb + 1):
+                    for n2 in range(0, cn_max - nb + 1):
+                        iter1 = (combinations_with_replacement(all_terminals, n1)
+                                 if n1 > 0 else [()])
+                        for t1 in iter1:
+                            iter2 = (combinations_with_replacement(all_terminals, n2)
+                                     if n2 > 0 else [()])
+                            for t2 in iter2:
+                                # Skip if multisets are identical (homotopic)
+                                if sorted(t1) == sorted(t2):
+                                    continue
+                                # Canonical order: lexicographically smaller side is m1
+                                key_t1 = tuple(sorted(t1))
+                                key_t2 = tuple(sorted(t2))
+                                if key_t1 > key_t2:
+                                    key_t1, key_t2 = key_t2, key_t1
+                                    t1, t2 = t2, t1
+                                # Deduplicate
+                                dedup_key = (ox, bridge, nb, key_t1, key_t2)
+                                if dedup_key in _seen:
+                                    continue
+                                _seen.add(dedup_key)
+
+                                tc1 = sum(mono_charge.get(l, bi_charge.get(l, 0))
+                                          for l in t1)
+                                tc2 = sum(mono_charge.get(l, bi_charge.get(l, 0))
+                                          for l in t2)
+                                # Charge neutrality: ox*2 + tc1 + tc2 + nb*bc == 0
+                                if 2 * ox + tc1 + tc2 + nb * bc != 0:
+                                    continue
+                                cn1 = n1 + nb
+                                cn2 = n2 + nb
+                                if not (cn_min <= cn1 <= cn_max):
+                                    continue
+                                if not (cn_min <= cn2 <= cn_max):
+                                    continue
+
+                                try:
+                                    mol = dimer(metal, ox=ox,
+                                                terminal_m1=list(t1),
+                                                terminal_m2=list(t2),
+                                                bridge=bridge, n=nb)
+                                except Exception:
+                                    continue
+                                if mol.charge != 0:
+                                    continue
+
+                                # Use the higher CN for geometry label
+                                cn_rep = max(cn1, cn2)
+                                geom   = _DEFAULT_GEOM_FOR_CN.get(cn_rep,
+                                                                    infer_geometry(cn_rep))
+                                cl1  = combo_label(list(t1)) or "bare"
+                                cl2  = combo_label(list(t2)) or "bare"
+                                fname = (f"{safe(cl1)}__{safe(cl2)}_"
+                                         f"{nb}x{safe(bridge)}.POSCAR")
+                                path = _poscar_path(output_root, "dimer", oxl,
+                                                    cn_rep, fname)
+                                row = _make_row(mol, "dimer_hetero", metal, ox,
+                                                cn_rep, geom,
+                                                f"{cl1}__{cl2}",
+                                                bridge, nb, None, "hetero", path)
+                                if verbose:
+                                    print(f"  ✓ dimer  {oxl} CN{cn1}/{cn2}  "
+                                          f"{nb}x{bridge:10s}  "
+                                          f"m1={list(t1)}  m2={list(t2)}  "
+                                          f"{mol.formula}")
                                 yield mol, row
 
 
@@ -480,9 +598,10 @@ def enumerate_complexes(
     nuclearity: Sequence[int] = (1, 2, 3),
     arrangements: Sequence[str] = ("linear", "triangular"),
     cn_range: Tuple[int, int] = (3, 7),
-    max_bridges_per_pair: int = 3,
+    max_bridges_per_pair: Optional[int] = None,
     multi_bridge_cases: Optional[List] = None,
     geometry_for_cn: Optional[Dict[int, str]] = None,
+    include_heteroleptic: bool = False,
     output_root: Optional[Path] = None,
     verbose: bool = True,
 ) -> Iterator[Tuple[Any, Dict[str, Any]]]:
@@ -500,8 +619,15 @@ def enumerate_complexes(
     arrangements         : Trimer topologies: "linear", "triangular".
     cn_range             : (min_CN, max_CN) inclusive, per metal centre.
     max_bridges_per_pair : Upper limit on bridges per metal pair in dimers.
+                           Defaults to cn_range[1] (catches paddle-wheel n=4 etc.).
     multi_bridge_cases   : Override the default MULTI_BRIDGE_CASES table.
     geometry_for_cn      : Override default CN → geometry mapping.
+    include_heteroleptic : If True, also enumerate heteroleptic dimers where the
+                           two metal centres carry *different* terminal ligand sets
+                           (e.g. Ni2(mu-HCOO)4(H2O) with water on only one Ni).
+                           Disabled by default because the combinatorial explosion
+                           is large; enable when you specifically want asymmetric
+                           dimer coverage.
     output_root          : Root directory for POSCAR path metadata (no I/O done here).
     verbose              : Print each structure as generated.
 
@@ -531,6 +657,15 @@ def enumerate_complexes(
             metal, ox_states, ligand_pool, list(bridge_pool), bi_ligands,
             cn_range, max_bridges_per_pair, geometry_for_cn, output_root, verbose,
         )
+        if include_heteroleptic:
+            if verbose:
+                print("\n" + "─" * 60)
+                print(f"  DIMERS – heteroleptic  ({metal})")
+                print("─" * 60)
+            yield from enumerate_heteroleptic_dimers(
+                metal, ox_states, ligand_pool, list(bridge_pool), bi_ligands,
+                cn_range, max_bridges_per_pair, geometry_for_cn, output_root, verbose,
+            )
 
     if 3 in nuclearity and bridge_pool:
         if verbose:
