@@ -18,8 +18,12 @@ Usage
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass  # Ligand is self-referential; annotations are strings under PEP 563
+from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
