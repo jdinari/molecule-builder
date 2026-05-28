@@ -444,15 +444,20 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
     # This handles cases where the initial torsion produced by place_ligand() still
     # leaves an H clashing because a bidentate O was placed in the same quadrant
     # AFTER the monodentate was tentatively positioned.
+    #
+    # IMPORTANT: only O/N donors directly bonded to the metal are rotated (H2O, OH,
+    # NH3).  H atoms on C (formate, formic acid, CO) must NOT be independently rotated
+    # because they are geometrically fixed relative to the C-O bond framework.
     _TORSION_STEPS = 72   # 5° resolution
     _MIN_H_D       = 1.77  # hard O-H minimum from validation
-    heavy_pos = [a.position for a in mol_atoms if a.symbol not in ("H",) and a.symbol != metal]
+    _DONOR_ELEMENTS = {"O", "N", "S", "P"}   # elements that can be M-bonded H-bearers
+    _MAX_M_DONOR    = 2.8                     # Å: donor must be within this of metal
 
     # Build a map: for each H atom, which donor atom is its immediate neighbour?
     for idx, atom in enumerate(mol_atoms):
         if atom.symbol != "H":
             continue
-        # Find the nearest non-H, non-metal atom (= the donor it belongs to)
+        # Find the nearest non-H, non-metal atom (= the atom it belongs to)
         nearest_donor = None
         nearest_d     = 9999.
         for a2 in mol_atoms:
@@ -462,6 +467,15 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
             if d < nearest_d:
                 nearest_d = d; nearest_donor = a2
         if nearest_donor is None:
+            continue
+
+        # Only rotate H atoms bonded to an O/N/S/P donor that is itself
+        # directly bonded to the metal.  H on C (formate H, HCOOH formyl H)
+        # must stay fixed relative to its C-O bond framework.
+        if nearest_donor.symbol not in _DONOR_ELEMENTS:
+            continue
+        donor_to_metal = float(np.linalg.norm(nearest_donor.position - metal_pos))
+        if donor_to_metal > _MAX_M_DONOR:
             continue
 
         # Find ALL H atoms bonded to the same donor
@@ -1462,8 +1476,12 @@ def trimer(metal: str,
     # ── Post-placement H torsion re-optimisation (trimer terminals) ───────────
     # Same logic as in _build_single: rotate H-bearing terminal ligands around
     # the M-donor axis to maximise clearance from bridge O atoms and other donors.
+    # Only applies to O/N/S/P donors directly bonded to the metal (H2O, OH, NH3),
+    # NOT to H atoms on C (formate, formic acid) which must remain fixed.
     if any(_tpm):
-        _TORSION_STEPS_T = 72
+        _TORSION_STEPS_T  = 72
+        _DONOR_ELEMS_T    = {"O", "N", "S", "P"}
+        _MAX_M_DONOR_T    = 2.8
         for idx, atom in enumerate(all_atoms):
             if atom.symbol != "H":
                 continue
@@ -1475,18 +1493,23 @@ def trimer(metal: str,
                 d = float(np.linalg.norm(atom.position - a2.position))
                 if d < nearest_d:
                     nearest_d = d; nearest_donor = a2
-            if nearest_donor is None or nearest_d > 1.15:
+            if nearest_donor is None:
                 continue
-            # Find the metal this donor is bonded to
-            donor_pos = nearest_donor.position
+            # Only O/N/S/P donors directly bonded to a metal
+            if nearest_donor.symbol not in _DONOR_ELEMS_T:
+                continue
+            # Find the closest metal to this donor
             closest_m = min(
                 (a for a in all_atoms if a.symbol == metal),
-                key=lambda a: float(np.linalg.norm(a.position - donor_pos)),
+                key=lambda a: float(np.linalg.norm(a.position - nearest_donor.position)),
                 default=None,
             )
             if closest_m is None:
                 continue
             m_pos_t = closest_m.position
+            if float(np.linalg.norm(nearest_donor.position - m_pos_t)) > _MAX_M_DONOR_T:
+                continue
+            donor_pos = nearest_donor.position
             h_group = [i for i, a in enumerate(all_atoms)
                        if a.symbol == "H"
                        and float(np.linalg.norm(a.position - donor_pos)) < 1.15]
