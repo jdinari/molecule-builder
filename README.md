@@ -1,56 +1,36 @@
 # molbuilder
 
-**Build transition metal complexes and export them as VASP POSCAR files.**
+**Generate 3D VASP POSCAR structures of transition-metal coordination complexes.**
 
-molbuilder generates 3D structures of mononuclear, dinuclear, and trinuclear transition metal complexes from a simple list of ligands. It handles bond lengths, ligand geometry (including H atoms), coordination geometry, and automatically produces all symmetry-distinct isomers.
+molbuilder builds mononuclear, dinuclear, and trinuclear complexes from a metal symbol, oxidation state, and a list of ligands. It handles bond lengths, ligand geometry (including all H atoms), coordination geometry, automatic isomer enumeration, and optional xTB or MACE-MH-1 geometry relaxation.
 
 ---
 
 ## Installation
 
-**From GitHub (recommended):**
-
 ```bash
 pip install git+https://github.com/jdinari/molecule-builder.git
 ```
 
-**To update to the latest version:**
+**Optional backends for geometry relaxation and thermochemistry:**
 
 ```bash
-pip install --upgrade git+https://github.com/jdinari/molecule-builder.git
+pip install tblite ase        # xTB — recommended for Ni coordination chemistry
+pip install mace-torch ase    # MACE-MH-1 — faster on GPU
+pip install openpyxl          # Excel output for energetics
 ```
-
-**From source (if you have the files locally):**
-
-```bash
-git clone https://github.com/jdinari/molecule-builder.git
-cd molecule-builder
-pip install .
-```
-
-**Editable install for development** — changes to the source take effect immediately without reinstalling:
-
-```bash
-git clone https://github.com/jdinari/molecule-builder.git
-cd molecule-builder
-pip install -e .
-```
-
-Dependencies (`numpy`, `scipy`, `rdkit`) are installed automatically.
 
 ---
 
 ## Quick start
 
 ```python
-from molbuilder.api import build, poscar
+from molbuilder.api import build, poscar, info
 
-# Octahedral Ni(II) hexaaqua complex
-mol = build("Ni", ox=2, ligands=["H2O"]*6)
+mol = build("Ni", ox=2, ligands=["H2O"] * 6)
+info(mol)
 poscar(mol, "Ni_H2O6.POSCAR")
 ```
-
-Or from the command line:
 
 ```bash
 molbuilder --metal Ni --ox 2 --ligands H2O H2O H2O H2O H2O H2O --out Ni_H2O6.POSCAR
@@ -62,100 +42,69 @@ molbuilder --metal Ni --ox 2 --ligands H2O H2O H2O H2O H2O H2O --out Ni_H2O6.POS
 
 ### Isomers are automatic
 
-Whenever a ligand set has more than one symmetry-distinct arrangement, `build()` returns a **list** of molecules (one per isomer). If there is only one arrangement it returns a single molecule. Each molecule carries a `.label` attribute (`"fac"`, `"mer"`, `"cis"`, `"trans"`, …).
+`build()` returns a **list** when more than one symmetry-distinct arrangement exists, or a single `Molecule` otherwise:
 
 ```python
 # Single isomer → Molecule
-mol = build("Ni", ox=2, ligands=["H2O"]*6)
+mol  = build("Ni", ox=2, ligands=["H2O"] * 6)
 
 # Two isomers → list[Molecule]
-mols = build("Fe", ox=3, ligands=["Cl","Cl","Cl","H2O","H2O","H2O"])
+mols = build("Fe", ox=3, ligands=["Cl"]*3 + ["H2O"]*3)
 for mol in mols:
-    print(mol.label)          # "fac" or "mer"
-    poscar(mol, f"FeCl3_H2O3_{mol.label}.POSCAR")
+    print(mol.label)              # "fac" or "mer"
+    poscar(mol, f"Fe_{mol.label}.POSCAR")
 ```
 
-The CLI follows the same logic — when multiple isomers exist, it writes one file per isomer and appends the label to the filename:
+### Ligand modes
 
-```
-FeCl3_H2O3.POSCAR  →  FeCl3_H2O3_fac.POSCAR
-                       FeCl3_H2O3_mer.POSCAR
-```
-
-### Denticity modes
-
-Append `:bi` or `:bridge` to a ligand name to change how it binds:
-
-| Name | Binding mode |
-|------|-------------|
+| Name | Binding |
+|------|---------|
 | `HCOO` | Monodentate formate — one O donor |
-| `HCOO:bi` | Bidentate chelating formate — both O donors, ~55° bite angle |
-| `HCOO:bridge` or `mu-HCOO` | Bridging formate |
-| `bpy` | Bidentate bipyridine (default) |
-| `bpy:mono` | Monodentate bipyridine |
+| `HCOO:bi` | Bidentate chelating formate — both O, ~55° bite angle |
+| `mu-HCOO` | Bridging formate — one O per metal centre |
+| `H2O` | Water — O donor |
+| `NH3` | Ammonia — N donor (H atoms correct, pointing away from metal) |
+| `OH` | Hydroxide — O donor, charge −1 |
+| `mu-OH` | Bridging hydroxide |
 
 ---
 
-## Python API
+## API reference
 
 ### Monomers
 
 ```python
 from molbuilder.api import build, poscar, xyz, info
 
-# [Ni(H2O)6]²⁺  —  one isomer
-mol = build("Ni", ox=2, ligands=["H2O"]*6)
-poscar(mol, "Ni_H2O6.POSCAR")
+# Octahedral Ni(II) hexaaqua
+mol = build("Ni", ox=2, ligands=["H2O"] * 6)
 
-# [FeCl3(H2O)3]  —  two isomers (fac and mer)
-mols = build("Fe", ox=3, ligands=["Cl","Cl","Cl","H2O","H2O","H2O"])
-for mol in mols:
-    poscar(mol, f"FeCl3_H2O3_{mol.label}.POSCAR")
+# Square planar Pd(II) — generates cis (cisplatin) and trans isomers
+mols = build("Pd", ox=2, ligands=["Cl", "Cl", "NH3", "NH3"], geometry="sqp")
 
-# [Ni(HCOO)2(H2O)4]  —  monodentate formate, cis and trans
-mols = build("Ni", ox=2, ligands=["HCOO","HCOO","H2O","H2O","H2O","H2O"])
-for mol in mols:
-    poscar(mol, f"Ni_HCOO2_H2O4_{mol.label}.POSCAR")
+# Bidentate chelating formate
+mol = build("Ni", ox=2, ligands=["HCOO:bi", "HCOO:bi", "H2O", "H2O"], geometry="sqp")
 
-# [Ni(HCOO:bi)2(H2O)2]  —  bidentate chelating formate
-mol = build("Ni", ox=2, ligands=["HCOO:bi","HCOO:bi","H2O","H2O"], geometry="sqp")
-poscar(mol, "Ni_HCOObi2_H2O2.POSCAR")
-
-# Specify geometry explicitly (default is inferred from coordination number)
-mol = build("Pd", ox=2, ligands=["Cl","Cl","NH3","NH3"], geometry="sqp")
-for mol in (mol if isinstance(mol, list) else [mol]):
-    poscar(mol, f"PdCl2_NH3_2_{mol.label}.POSCAR")  # cis-platin and trans-platin
-
-# Print a structure summary
-info(mol)
-
-# Also write XYZ
-xyz(mol, "Ni_H2O6.xyz")
+# All geometries and coordination numbers
+mol = build("Fe", ox=2, ligands=["CO"] * 6, geometry="oct")
+mol = build("Cu", ox=2, ligands=["Cl"] * 4, geometry="sqp")
 ```
 
 ### Dimers
 
-Bridging ligands hold two metal centres together. There is no metal–metal bond unless you explicitly request one with `mm_bond=True`.
-
 ```python
 from molbuilder.api import dimer, poscar
 
-# [Ni2(μ-OH)2(H2O)8]  —  di-μ-hydroxo dimer
-mol = dimer("Ni", ox=2, terminal=["H2O","H2O","H2O","H2O"], bridge="mu-OH", n=2)
-poscar(mol, "Ni2_muOH2_H2O8.POSCAR")
+# Di-μ-hydroxo dimer — CN=4 per Ni
+mol = dimer("Ni", ox=2, terminal=["H2O", "H2O"], bridge="mu-OH", n=2)
 
-# [Ni2(μ-HCOO)2(H2O)6]  —  bridging formate
-mol = dimer("Ni", ox=2, terminal=["H2O","H2O","H2O"], bridge="mu-HCOO", n=2)
-poscar(mol, "Ni2_muHCOO2_H2O6.POSCAR")
+# Paddle-wheel — 4 bridging formates, no terminals, common MOF building unit
+mol = dimer("Ni", ox=2, terminal=[], bridge="mu-HCOO", n=4)
 
-# Mixed terminal ligands
-mol = dimer("Ni", ox=2, terminal=["HCOO","H2O","H2O"], bridge="mu-OH", n=2)
-poscar(mol, "Ni2_muOH2_HCOO2_H2O4.POSCAR")
-
-# Metal–metal bonded dimer (e.g. Re quadruple bond)
-mol = dimer("Re", ox=3, terminal=["Cl","Cl","Cl"], bridge="mu-Cl", n=2,
-            mm_bond=True, mm_distance=2.22)
-poscar(mol, "Re2_quadruple_bond.POSCAR")
+# Heteroleptic — different terminal ligands on each metal centre
+mol = dimer("Ni", ox=2,
+            terminal_m1=["H2O"], terminal_m2=[],
+            bridge="mu-HCOO", n=4)
 ```
 
 ### Trimers
@@ -163,294 +112,183 @@ poscar(mol, "Re2_quadruple_bond.POSCAR")
 ```python
 from molbuilder.api import trimer, poscar
 
-# Linear Fe3 with bridging hydroxides
-mol = trimer("Fe", ox=3, terminal=["H2O","H2O"], bridge="mu-OH", arrangement="linear")
-poscar(mol, "Fe3_linear_muOH.POSCAR")
+# Linear Fe(III) trimer
+mol = trimer("Fe", ox=3, terminal=["H2O", "H2O"], bridge="mu-OH",
+             arrangement="linear")
 
-# Triangular Ru3 carbonyl cluster
-mol = trimer("Ru", ox=0, terminal=["CO","CO","CO","CO"], bridge="mu-CO",
-             arrangement="triangular")
-poscar(mol, "Ru3_triangular_CO12.POSCAR")
+# Triangular Ni3 — equilateral triangle, double-bridge per edge
+mol = trimer("Ni", ox=2, terminal=[], bridge="mu-HCOO",
+             arrangement="triangular", n_bridges_per_pair=2)
+
+# Heteroleptic — H2O on one metal only
+mol = trimer("Ni", ox=2, bridge="mu-HCOO",
+             arrangement="triangular", n_bridges_per_pair=2,
+             terminals_per_metal=[["H2O"], [], []])
 ```
 
-### Custom POSCAR ligands
-
-Load an unusual ligand from an existing POSCAR file:
+### Geometry relaxation
 
 ```python
-from molbuilder.api import build, load_ligand_from_poscar, poscar
+from molbuilder.relaxation import relax, compute_energy, thermochemistry, check_bonds_intact
 
-lig = load_ligand_from_poscar("my_ligand.POSCAR", donor_atom_indices=[0], charge=-1)
-mol = build("Ni", ox=2, ligands=["H2O","H2O","H2O","H2O","H2O", lig])
-poscar(mol, "Ni_custom.POSCAR")
-```
+mol = build("Ni", ox=2, ligands=["H2O"] * 6)
 
----
+# Geometry relaxation
+res = relax(mol, backend="xtb", fmax=0.05, steps=300)
+print(f"E = {res.energy_eV:.4f} eV  converged={res.converged}")
 
-## Energy & thermochemistry
+# Bond integrity check — detects ligand dissociation
+bc = check_bonds_intact(mol, res.mol)
+print(f"Bond status: {'OK' if bc['intact'] else 'BROKEN'}")
+print(f"Max elongation: {bc['max_elongation']:.2f}×")
 
-molbuilder can relax structures and compute energetics using two backends:
-
-| Backend | Method | Best for |
-|---------|--------|----------|
-| `xtb` | GFN2-xTB via tblite | Ni coordination chemistry; explicit charge/spin |
-| `mace` | MACE-MH-1 MLIP | Larger clusters; faster on GPU |
-
-### Setting your MACE model path
-
-By default the MACE backend downloads `mh-1` (~500 MB) on first use. **On a cluster without internet access, or when using a custom fine-tuned model, you need to point to your local `.model` file.** There are three places to do this depending on how you're running the code:
-
-#### 1. `generate_ni_complexes.py` (batch generation script)
-
-Open the file and set `MACE_MODEL` near the top:
-
-```python
-# ── Energy computation ─────────────────────────────────────────────────────
-COMPUTE_ENERGY  = True
-ENERGY_BACKEND  = "mace"
-MACE_MODEL      = "/path/to/your/mace-mh-1.model"   # ← set this
-MACE_DEVICE     = "cuda"                              # "cpu" or "cuda"
-```
-
-#### 2. `compute_energetics.py` (CLI script for an existing POSCAR directory)
-
-Pass the path via `--model`:
-
-```bash
-python compute_energetics.py \
-    --poscar-dir poscar/ \
-    --backend mace \
-    --model /path/to/your/mace-mh-1.model \
-    --mace-device cuda
-```
-
-#### 3. Python API directly
-
-Pass the path as the `model` argument to any relaxation function:
-
-```python
-from molbuilder.relaxation import relax, thermochemistry
-
-result = relax(mol, backend="mace",
-               model="/path/to/your/mace-mh-1.model",
-               device="cuda")
-
-thermo = thermochemistry(mol, backend="mace",
-                         model="/path/to/your/mace-mh-1.model",
-                         device="cuda")
-```
-
-> **Tip:** The `model` argument accepts anything that `mace_mp(model=...)` accepts — a local file path, a URL, or a named preset like `"mh-1"`. For cluster use, a local path is always the safest option.
-
-### Running energetics
-
-```python
-from molbuilder.api import build
-from molbuilder.relaxation import relax, compute_energy, thermochemistry
-
-mol = build("Ni", ox=2, ligands=["H2O"]*6)
-
-# Geometry relaxation only
-result = relax(mol, backend="xtb")
-print(result.energy_eV, result.converged)
-
-# Single-point (no geometry change)
-result = compute_energy(mol, backend="mace", model="/path/to/mace.model", device="cuda")
-
-# Full thermochemistry (relax + frequencies + ΔG)
-thermo = thermochemistry(mol, backend="xtb", T=298.15, P=101325.0)
-print(thermo.gibbs_eV)
-
-# Recompute ΔG at a different temperature without re-running:
-print(thermo.gibbs_at(T=350))
+# Full thermochemistry — relax + frequencies + ΔG
+thermo = thermochemistry(mol, backend="xtb", T=298.15, P=101325)
+print(f"G(298K) = {thermo.gibbs_eV:.4f} eV")
+print(f"G(350K) = {thermo.gibbs_at(T=350):.4f} eV")  # no re-run needed
 ```
 
 ### ΔE and ΔG for reactions
 
 ```python
-results = {name: thermochemistry(mol, backend="xtb") for name, mol in species.items()}
-dE = results["product"].energy_eV - results["reactant"].energy_eV
-dG = results["product"].gibbs_eV  - results["reactant"].gibbs_eV
+from molbuilder.relaxation import thermochemistry
+
+r_hexaaqua = thermochemistry(Ni_H2O6,       backend="xtb", T=298.15)
+r_formate   = thermochemistry(HCOO_molecule, backend="xtb", T=298.15)
+r_product   = thermochemistry(Ni_HCOO_H2O5, backend="xtb", T=298.15)
+r_water     = thermochemistry(H2O_molecule,  backend="xtb", T=298.15)
+
+dE = r_product.energy_eV + r_water.energy_eV \
+   - r_hexaaqua.energy_eV - r_formate.energy_eV
+
+dG = r_product.gibbs_eV  + r_water.gibbs_eV  \
+   - r_hexaaqua.gibbs_eV - r_formate.gibbs_eV
+
+# Re-evaluate at any T/P without re-running:
+dG_350 = (r_product.gibbs_at(350) + r_water.gibbs_at(350)
+        - r_hexaaqua.gibbs_at(350) - r_formate.gibbs_at(350))
 ```
 
----
+### Batch generation
 
-## CLI reference
-
-After `pip install .` the `molbuilder` command is available everywhere.
-
-```
-molbuilder --metal SYMBOL --ox N --ligands L1 L2 ... --out FILE.POSCAR [options]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--metal` | Element symbol, e.g. `Ni`, `Fe`, `Pd` |
-| `--ox` | Oxidation state, e.g. `2`, `3` |
-| `--ligands` | Space-separated ligand names. Colon modes supported: `HCOO:bi`, `bpy:mono` |
-| `--geometry` | Coordination geometry key (see table below). Auto-inferred if omitted |
-| `--out` | Output POSCAR file. Multiple isomers → one file per isomer |
-| `--dimer` | Build a dinuclear complex |
-| `--trimer` | Build a trinuclear complex |
-| `--bridge` | Bridging ligand for dimer/trimer, e.g. `mu-OH`, `mu-HCOO` |
-| `--n-bridges` | Number of bridging ligand units (default: 2) |
-| `--arrangement` | Trimer arrangement: `triangular` or `linear` (default: triangular) |
-| `--mm-bond` | Include a metal–metal bond |
-| `--mm-distance` | Override M–M distance in Å |
-| `--xyz` | Also write an XYZ file alongside the POSCAR |
-| `--print` | Print POSCAR to stdout |
-| `--custom-ligand` | Path to a POSCAR file to use as a custom ligand |
-| `--donor-atoms` | Comma-separated donor atom indices in the custom ligand |
-| `--ligand-charge` | Formal charge of the custom ligand |
-| `--list-ligands` | Print all available ligand names |
-| `--list-geometries` | Print all supported geometry keys |
-
-### Examples
-
-```bash
-# Octahedral Fe(III) — generates fac and mer isomers automatically
-molbuilder --metal Fe --ox 3 \
-    --ligands Cl Cl Cl H2O H2O H2O \
-    --out FeCl3_H2O3.POSCAR
-# → FeCl3_H2O3_fac.POSCAR  and  FeCl3_H2O3_mer.POSCAR
-
-# Square planar Pd(II) — cis-platin and trans-platin
-molbuilder --metal Pd --ox 2 \
-    --ligands Cl Cl NH3 NH3 --geometry sqp \
-    --out PdCl2_NH3_2.POSCAR
-
-# Bidentate chelating formate
-molbuilder --metal Ni --ox 2 \
-    --ligands HCOO:bi HCOO:bi H2O H2O --geometry sqp \
-    --out Ni_HCOObi2_H2O2.POSCAR
-
-# Di-μ-hydroxo dimer
-molbuilder --dimer --metal Ni --ox 2 \
-    --ligands H2O H2O H2O H2O \
-    --bridge mu-OH --n-bridges 2 \
-    --out Ni2_muOH2_H2O8.POSCAR
-
-# Linear Ni3 trimer with bridging formate
-molbuilder --trimer --metal Ni --ox 2 \
-    --ligands H2O H2O H2O \
-    --bridge mu-HCOO --arrangement linear \
-    --out Ni3_linear_muHCOO.POSCAR
-
-# Print to stdout and save, also write XYZ
-molbuilder --metal Ni --ox 2 --ligands H2O H2O H2O H2O H2O H2O \
-    --out Ni_H2O6.POSCAR --print --xyz
-
-# List everything available
-molbuilder --list-ligands
-molbuilder --list-geometries
-```
-
----
-
-## Batch generation
-
-`generate_ni_complexes.py` generates all neutral Ni(II) and Ni(III) structures across coordination numbers 3–7, using formate (mono and bidentate), formic acid, water, and hydroxide as ligands, for monomers, dimers, and trimers:
+The `generate_ni_complexes.py` script generates all neutral Ni(II)/Ni(III) complexes across CN 3–7 using formate, formic acid, water, hydroxide, and bidentate formate as ligands:
 
 ```bash
 python generate_ni_complexes.py
 ```
 
-Output goes to `poscar/` organised by structure type, oxidation state, and CN. A summary CSV (`ni_complexes_summary.csv`) indexes every file with its formula, charge, atom count, geometry, and ligand combination.
+Set `COMPUTE_ENERGY = True` at the top to also relax every structure with xTB or MACE and produce an Excel workbook with colour-coded bond status.
+
+---
+
+## Bond status
+
+After relaxation, every M-L bond is compared to its initial length:
+
+| Status | M-L elongation | Meaning |
+|--------|---------------|---------|
+| `OK` | ≤ 1.20× | Clean structure |
+| `STRETCHED` | 1.20–1.35× | Possible strain — review |
+| `BROKEN` | > 1.35× | Ligand dissociated during relaxation |
+
+Bond breaking is reported, not suppressed. If xTB says a ligand departs, the coordination is genuinely strained — this is useful information before DFT.
+
+---
+
+## Backend comparison
+
+| | xTB (GFN2-xTB) | MACE-MH-1 |
+|---|---|---|
+| Install | `pip install tblite ase` | `pip install mace-torch ase` |
+| Model size | < 1 MB | ~500 MB |
+| Charge/spin | ✓ explicit | ✗ implicit only |
+| Ni(III) open-shell | ✓ reliable | ✗ verify against xTB |
+| Speed (CPU) | ~5 s / structure | ~8 s / structure |
+| Speed (GPU) | — | ~0.5 s / structure |
+| Thermochemistry | ✓ | ✓ (numerical freq) |
+| Recommended for | All Ni coordination chemistry | Large batches on GPU |
+
+**For Ni(II)/Ni(III) coordination complexes, xTB is the recommended default** — it has explicit Ni d-electron parameters and takes charge/spin directly.
+
+MACE uses `head="omol"` automatically — the molecular head trained on OMOL/OC20/MATPES data with wB97M-V/R2SCAN references.
 
 ---
 
 ## Geometry reference
 
-| Key | Name | CN |
-|-----|------|-----|
+| Key | Geometry | CN |
+|-----|----------|----|
 | `lin` | Linear | 2 |
-| `bent` | Bent | 2 |
 | `tp` | Trigonal planar | 3 |
-| `tshaped` | T-shaped | 3 |
-| `tet` | Tetrahedral | 4 |
-| `sqp` | Square planar | 4 |
-| `seesaw` | See-saw | 4 |
+| `tet` / `td` | Tetrahedral | 4 |
+| `sqp` / `sp` | Square planar | 4 |
 | `tbp` | Trigonal bipyramidal | 5 |
-| `sqpy` | Square pyramidal | 5 |
-| `oct` | Octahedral | 6 |
+| `sqpy` / `spy` | Square pyramidal | 5 |
+| `oct` / `oh` | Octahedral | 6 |
 | `tpr` | Trigonal prismatic | 6 |
 | `pbp` | Pentagonal bipyramidal | 7 |
-| `sapr` | Square antiprismatic | 8 |
-
-Aliases: `td` = `tet`, `sp` = `sqp`, `oh` = `oct`, `spy` = `sqpy`
 
 ---
 
 ## Ligand reference
 
-### Common ligands
-
 | Name | Formula | Donor | Charge | Denticity |
 |------|---------|-------|--------|-----------|
 | `H2O` / `aqua` | H₂O | O | 0 | 1 |
-| `OH` | OH⁻ | O | −1 | 1 — terminal hydroxide |
-| `mu-OH` | OH⁻ | O | −1 | 1 — bridging hydroxide |
+| `OH` | OH⁻ | O | −1 | 1 |
 | `NH3` / `ammine` | NH₃ | N | 0 | 1 |
 | `CO` | CO | C | 0 | 1 |
-| `CN` | CN⁻ | C | −1 | 1 |
 | `Cl`, `Br`, `I`, `F` | X⁻ | X | −1 | 1 |
-| `NO2` | NO₂⁻ | N | −1 | 1 |
-| `SCN` | SCN⁻ | S | −1 | 1 |
-| `py` / `pyridine` | C₅H₅N | N | 0 | 1 |
-| `MeCN` | CH₃CN | N | 0 | 1 |
-| `PPh3` | PPh₃ | P | 0 | 1 |
-| `dmso` / `DMSO` | DMSO | S | 0 | 1 |
-
-### Formate / formic acid
-
-| Name | Binding mode | Charge |
-|------|-------------|--------|
-| `HCOO` / `formate` | Monodentate through one O | −1 |
-| `HCOO:bi` | Bidentate chelating, O,O, ~55° bite | −1 |
-| `mu-HCOO` / `HCOO:bridge` | Bridging, one O per metal | −1 |
-| `HCOOH` | Monodentate formic acid, through C=O oxygen | 0 |
-| `HCOOH:bi` | Bidentate formic acid | 0 |
-
-### Bidentate and multidentate
-
-| Name | Donors | Charge | Denticity |
-|------|--------|--------|-----------|
-| `en` | N, N | 0 | 2 |
-| `bpy` / `bipy` | N, N | 0 | 2 |
-| `phen` | N, N | 0 | 2 |
-| `acac` | O, O | −1 | 2 |
-| `ox` / `oxalate` | O, O | −2 | 2 |
-| `OAc` / `acetate` | O | −1 | 1 |
-| `OAc:bi` | O, O | −1 | 2 |
-| `glycinate` | N, O | −1 | 2 |
-| `tpy` / `terpy` | N, N, N | 0 | 3 |
-| `EDTA` | N, N, O, O, O, O | −4 | 6 |
-| `Cp` | C×5 (η⁵) | −1 | 5 |
+| `HCOO` | HCOO⁻ | O (mono) | −1 | 1 |
+| `HCOO:bi` | HCOO⁻ | O,O (chelate) | −1 | 2 |
+| `mu-HCOO` | HCOO⁻ | O (bridge) | −1 | 1 |
+| `HCOOH` | HCOOH | O | 0 | 1 |
+| `mu-OH` | OH⁻ (bridge) | O | −1 | 1 |
+| `en` | ethylenediamine | N,N | 0 | 2 |
+| `bpy` / `bipy` | bipyridine | N,N | 0 | 2 |
+| `phen` | phenanthroline | N,N | 0 | 2 |
+| `acac` | acetylacetonate | O,O | −1 | 2 |
+| `ox` | oxalate | O,O | −2 | 2 |
+| `tpy` | terpyridine | N,N,N | 0 | 3 |
+| `EDTA` | EDTA | N,N,O,O,O,O | −4 | 6 |
 
 ---
 
-## Isomer reference
+## Tutorials
 
-| Composition | Geometry | Isomers |
-|-------------|----------|---------|
-| MA₆ | oct | 1 |
-| MA₅B | oct | 1 |
-| MA₄B₂ | oct | 2 — cis, trans |
-| MA₃B₃ | oct | 2 — fac, mer |
-| MA₄BC | oct | 2 |
-| MA₂B₂C₂ | oct | 5 |
-| MA₄ | sqp | 1 |
-| MA₃B | sqp | 1 |
-| MA₂B₂ | sqp | 2 — cis, trans |
+Six step-by-step tutorials in `tutorials/`:
+
+| # | Topic |
+|---|-------|
+| 01 | First complex — build, inspect, write POSCAR |
+| 02 | Isomers and bidentate ligands |
+| 03 | Dimers, paddle-wheels, heteroleptic dimers, triangular trimers |
+| 04 | MACE relaxation on a cluster (local model file, GPU, SLURM) |
+| 05 | xTB thermochemistry — ΔE and ΔG for ligand substitution |
+| 06 | Batch enumeration with `enumerate_complexes()` and `run_energetics()` |
+
+```bash
+python tutorials/01_first_complex.py
+```
+
+Short copy-paste examples are in `examples/`.
+
+---
+
+## Known limitations
+
+- `dimer(..., mm_bond=True)` with terminal halides may produce Cl-on-Re placements. Use `mm_bond=True` with bare dimers (no terminals) for now.
+- Ru₃(μ-CO) triangular trimers produce C-C clashes at ideal template geometry. Start from a crystallographic geometry and relax.
+- CN=7 (pentagonal bipyramidal) structures with ≥2 H-bearing ligands are filtered out of batch enumeration automatically because equatorial ligands at 72° spacing cause unavoidable H-H contacts.
 
 ---
 
 ## How it works
 
-**Bond lengths** are drawn from a database of CSD-averaged M–L distances (Orpen et al. 1989), keyed by metal, oxidation state, donor atom, and geometry. The fallback hierarchy is: same metal/ox/donor averaged over geometries → same metal/donor averaged over oxidation states → Alvarez (2008) covalent radii sum.
+**Bond lengths** are drawn from a database of CSD-averaged M-L distances (Orpen et al. 1989), keyed by metal, oxidation state, donor element, and geometry.
 
-**Ligand geometry** is built using internal coordinates (real bond lengths and angles). For each ligand, the M–donor–C angle places the first non-donor atom correctly (e.g. 120° for formate's sp² oxygen), and the torsion around the M–donor axis is optimised to point the ligand bulk into the largest gap between adjacent coordination sites.
+**Ligand geometry** is built using internal coordinates. The M-donor-H angle for NH₃, H₂O, and other H-bearing ligands is computed with the metal as the grandparent reference so H atoms always point away from the metal centre.
 
-**Isomers** are enumerated by generating all permutations of ligands across coordination sites and de-duplicating under the point-group symmetry of the geometry (Oₕ for octahedral, D₄ₕ for square planar, Tₐ for tetrahedral, etc.).
+**Isomers** are enumerated by generating all permutations of ligands across coordination sites and de-duplicating under the point-group symmetry of the geometry (Oₕ for octahedral, D₄ₕ for square planar, Tₐ for tetrahedral).
 
-**POSCAR format** — atoms are centred in a cubic vacuum box (15 Å padding per side), species sorted by atomic number, Cartesian coordinates in Å. Charge and spin multiplicity are written in the comment line.
+**POSCAR format** — atoms centred in a cubic vacuum box (≥15 Å padding), species sorted by atomic number, Cartesian coordinates in Å, charge and spin multiplicity in the comment line.

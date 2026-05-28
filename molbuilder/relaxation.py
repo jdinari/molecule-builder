@@ -445,11 +445,15 @@ def _mace_calculator(mol: Molecule, model: str, device: str,
                      dtype: str = "float64"):
     """Return a MACE ASE calculator."""
     from mace.calculators import mace_mp
+    # head="omol" selects the molecular/organics head in MACE-MH models,
+    # which is trained on OMOL/OC20 data with wB97M-V references and is
+    # the most appropriate for coordination complex geometry optimisation.
     calc = mace_mp(
         model         = model,
         device        = device,
         default_dtype = dtype,
-        dispersion    = False,   # dispersion less critical for small molecules
+        dispersion    = False,
+        head          = "omol",
     )
     # MACE does not natively accept charge/spin in the ASE calculator interface
     # for mace_mp models; these are encoded in the training data implicitly.

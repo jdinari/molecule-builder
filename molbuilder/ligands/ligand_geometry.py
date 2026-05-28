@@ -457,15 +457,19 @@ def place_ligand(ligand_name: str,
             child_pos = p_pos + bond * child_local
         else:
             # For atoms whose parent is the donor, the grandparent is:
-            #   - the previously placed sibling (index i-1) if it also has the donor as parent
-            #     (this gives the correct X-Y-X angle between siblings)
-            #   - otherwise the virtual metal at +x
+            #   - the virtual metal at +x  when the atom has an explicit dihedral
+            #     (preserves M-N-H angle, ensures H points away from metal — e.g. NH3)
+            #   - the previously placed sibling when no explicit dihedral is given
+            #     (gives correct X-Y-X angle, e.g. H2O second H)
             if parent_idx == 0:
                 prev_parent = atoms_def[i - 1][2] if i > 1 else None
-                if prev_parent == 0:
-                    # previous atom is also a donor-child — use it as grandparent
+                if prev_parent == 0 and dihedral is None:
+                    # previous atom is also a donor-child, no dihedral given →
+                    # use it as grandparent to get the correct X-donor-X angle
                     gp_pos = local_pos[i - 1]
                 else:
+                    # explicit dihedral or no previous sibling → use metal as
+                    # grandparent so M-donor-child angle is correctly preserved
                     gp_pos = _metal_local
             elif parent_idx > 0:
                 gp_of_parent = atoms_def[parent_idx][2]
