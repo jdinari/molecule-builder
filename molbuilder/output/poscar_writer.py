@@ -45,7 +45,6 @@ def poscar_to_string(mol: Molecule, padding: float = PADDING) -> str:
 
     atoms = mol.atoms
     symbols = [a.symbol for a in atoms]
-    positions = np.array([a.position for a in atoms])
 
     # ── sort species heaviest-first ────────────────────────────────────────
     unique_elements = list(OrderedDict.fromkeys(symbols))  # preserve first-seen order
