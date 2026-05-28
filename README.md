@@ -187,6 +187,94 @@ poscar(mol, "Ni_custom.POSCAR")
 
 ---
 
+## Energy & thermochemistry
+
+molbuilder can relax structures and compute energetics using two backends:
+
+| Backend | Method | Best for |
+|---------|--------|----------|
+| `xtb` | GFN2-xTB via tblite | Ni coordination chemistry; explicit charge/spin |
+| `mace` | MACE-MH-1 MLIP | Larger clusters; faster on GPU |
+
+### Setting your MACE model path
+
+By default the MACE backend downloads `mh-1` (~500 MB) on first use. **On a cluster without internet access, or when using a custom fine-tuned model, you need to point to your local `.model` file.** There are three places to do this depending on how you're running the code:
+
+#### 1. `generate_ni_complexes.py` (batch generation script)
+
+Open the file and set `MACE_MODEL` near the top:
+
+```python
+# ── Energy computation ─────────────────────────────────────────────────────
+COMPUTE_ENERGY  = True
+ENERGY_BACKEND  = "mace"
+MACE_MODEL      = "/path/to/your/mace-mh-1.model"   # ← set this
+MACE_DEVICE     = "cuda"                              # "cpu" or "cuda"
+```
+
+#### 2. `compute_energetics.py` (CLI script for an existing POSCAR directory)
+
+Pass the path via `--model`:
+
+```bash
+python compute_energetics.py \
+    --poscar-dir poscar/ \
+    --backend mace \
+    --model /path/to/your/mace-mh-1.model \
+    --mace-device cuda
+```
+
+#### 3. Python API directly
+
+Pass the path as the `model` argument to any relaxation function:
+
+```python
+from molbuilder.relaxation import relax, thermochemistry
+
+result = relax(mol, backend="mace",
+               model="/path/to/your/mace-mh-1.model",
+               device="cuda")
+
+thermo = thermochemistry(mol, backend="mace",
+                         model="/path/to/your/mace-mh-1.model",
+                         device="cuda")
+```
+
+> **Tip:** The `model` argument accepts anything that `mace_mp(model=...)` accepts — a local file path, a URL, or a named preset like `"mh-1"`. For cluster use, a local path is always the safest option.
+
+### Running energetics
+
+```python
+from molbuilder.api import build
+from molbuilder.relaxation import relax, compute_energy, thermochemistry
+
+mol = build("Ni", ox=2, ligands=["H2O"]*6)
+
+# Geometry relaxation only
+result = relax(mol, backend="xtb")
+print(result.energy_eV, result.converged)
+
+# Single-point (no geometry change)
+result = compute_energy(mol, backend="mace", model="/path/to/mace.model", device="cuda")
+
+# Full thermochemistry (relax + frequencies + ΔG)
+thermo = thermochemistry(mol, backend="xtb", T=298.15, P=101325.0)
+print(thermo.gibbs_eV)
+
+# Recompute ΔG at a different temperature without re-running:
+print(thermo.gibbs_at(T=350))
+```
+
+### ΔE and ΔG for reactions
+
+```python
+results = {name: thermochemistry(mol, backend="xtb") for name, mol in species.items()}
+dE = results["product"].energy_eV - results["reactant"].energy_eV
+dG = results["product"].gibbs_eV  - results["reactant"].gibbs_eV
+```
+
+---
+
 ## CLI reference
 
 After `pip install .` the `molbuilder` command is available everywhere.
@@ -274,7 +362,7 @@ Output goes to `poscar/` organised by structure type, oxidation state, and CN. A
 ## Geometry reference
 
 | Key | Name | CN |
-|-----|------|----|
+|-----|------|-----|
 | `lin` | Linear | 2 |
 | `bent` | Bent | 2 |
 | `tp` | Trigonal planar | 3 |
