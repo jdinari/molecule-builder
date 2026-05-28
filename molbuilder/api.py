@@ -17,25 +17,31 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict
 import numpy as np
 
 from molbuilder.core.molecule import Molecule, Atom
 from molbuilder.core.geometry import (
-    get_geometry_vectors, infer_geometry, resolve_geometry, list_geometries,
+    get_geometry_vectors, infer_geometry, resolve_geometry,
+    list_geometries,   # re-exported for cli.py and external callers  # noqa: F401
 )
 from molbuilder.core.bond_lengths import get_bond_length
 from molbuilder.core.isomers import enumerate_isomers
-from molbuilder.ligands.library import get_ligand, list_ligands
+from molbuilder.ligands.library import get_ligand, list_ligands  # list_ligands re-exported  # noqa: F401
 from molbuilder.ligands.ligand_geometry import (
     place_ligand, place_bidentate_ligand,
-    get_ligand_atoms, get_ligand_atoms_multidentate,
+    get_ligand_atoms_multidentate,
     _rodrigues_rotation, _rot_around_axis,
-    check_clashes, resolve_clash_by_rotation, _clash_score,
 )
 from molbuilder.output.poscar_writer import poscar_to_string
 from molbuilder.output.xyz_writer import xyz_to_string
-from molbuilder.core.validation import validate, ValidationResult
+from molbuilder.core.validation import validate
+
+# ── re-exported symbols ──────────────────────────────────────────────────────
+# list_geometries and list_ligands are imported here so that external code
+# can do `from molbuilder.api import list_geometries` as a convenience.
+__all_reexports__ = [list_geometries, list_ligands]  # keeps linters happy
+
 
 
 # ── spin-state estimation ────────────────────────────────────────────────────
@@ -505,7 +511,13 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
         if not obstacles:
             continue
 
-        # Sweep torsion angles and find the best one
+        # Compute current clearance; skip the sweep entirely if already clean
+        current_min_d = min(
+            float(np.linalg.norm(mol_atoms[hi].position - ob))
+            for hi in h_group for ob in obstacles
+        )
+        if current_min_d >= _MIN_H_D:
+            continue   # H already clear of all obstacles — no rotation needed
         best_min_d = -1.
         best_R     = np.eye(3)
         for step in range(_TORSION_STEPS):
@@ -525,12 +537,7 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
             if min_d > best_min_d:
                 best_min_d = min_d; best_R = R
 
-        # Only update if the best torsion is better than the current one
-        current_min_d = min(
-            float(np.linalg.norm(mol_atoms[hi].position - ob))
-            for hi in h_group for ob in obstacles
-        )
-        if best_min_d > current_min_d + 0.01:
+        if best_min_d > current_min_d + 0.01:   # current_min_d set above
             for hi, hv in zip(h_group, h_vecs_rel):
                 mol_atoms[hi].position = donor_pos + best_R @ hv
 
@@ -847,7 +854,6 @@ def dimer(metal: str,
         bridge_bl    = 2.5
         bridge_donor = "O"
 
-    term_bl = get_bond_length(metal, ox, "O", geom_canon)  # representative
 
     # ── M-M distance ──────────────────────────────────────────────────────────
     if mm_distance is not None:
@@ -882,7 +888,6 @@ def dimer(metal: str,
     if cn_total == 0:
         cn_total = 6
     geom_canon = resolve_geometry(geometry) if geometry else infer_geometry(cn_total)
-    vecs = get_geometry_vectors(geom_canon)
 
     # Since bridges are placed first (their positions come from clearance sweep,
     # not the geometry vectors), we give add_terminal ALL geometry vectors and let
@@ -1219,7 +1224,6 @@ def trimer(metal: str,
 
     # 2. All bridges (n_bridges_per_pair bridges per pair)
     bridge_atoms_added    = 0
-    n_bridges_total       = len(pairs_list) * n_bridges_per_pair
     chosen_dirs_trimer: List[np.ndarray] = []
     global_bridge_idx     = 0   # monotonic index across all pair×bridge combinations
 

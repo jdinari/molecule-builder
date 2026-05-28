@@ -15,11 +15,10 @@ Denticity modes use colon notation: HCOO:bi, bpy:mono, etc.
 """
 
 import argparse
-import sys
 from pathlib import Path
 
 from molbuilder.api import (
-    build, build_isomers, dimer, trimer, poscar, xyz, info,
+    build, dimer, trimer,
     load_ligand_from_poscar,
 )
 from molbuilder.output.poscar_writer import poscar_to_string

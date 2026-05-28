@@ -16,7 +16,15 @@ from molbuilder.combinatorics import (
     MULTI_BRIDGE_CASES,
     combo_label,
 )
-from molbuilder.output.writer import write_all, write_poscar, write_xyz, write_csv
+from molbuilder.output.writer import write_all, write_poscar, write_xyz, write_csv, write_json
+from molbuilder.relaxation import (
+    relax, compute_energy, compute_gibbs, thermochemistry,
+    compare_backends, check_bonds_intact,
+    RelaxResult, ThermResult,
+)
+from molbuilder.energetics import (
+    run_energetics, molecule_name, BondStatus,
+)
 from molbuilder.exceptions import (
     MolbuilderError,
     InvalidLigandError,
@@ -45,7 +53,13 @@ __all__ = [
     "MULTI_BRIDGE_CASES",
     "combo_label",
     # I/O helpers
-    "write_all", "write_poscar", "write_xyz", "write_csv",
+    "write_all", "write_poscar", "write_xyz", "write_csv", "write_json",
+    # relaxation
+    "relax", "compute_energy", "compute_gibbs", "thermochemistry",
+    "compare_backends", "check_bonds_intact",
+    "RelaxResult", "ThermResult",
+    # energetics pipeline
+    "run_energetics", "molecule_name", "BondStatus",
     # exceptions
     "MolbuilderError", "InvalidLigandError", "GeometryError",
     "ClashError", "CoordinationError", "ChargeError", "ValidationError",
