@@ -29,12 +29,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import List, Optional, Set, Tuple
+from typing import List, Set
 
 import numpy as np
 
-from molbuilder.core.bond_lengths import COVALENT_RADII, get_bond_length
-from molbuilder.core.molecule import Atom, Molecule
+from molbuilder.core.bond_lengths import COVALENT_RADII
+# TODO: also import get_bond_length when M-L distance sanity check is added
+from molbuilder.core.molecule import Molecule
 
 # ── constants ──────────────────────────────────────────────────────────────────
 
@@ -334,7 +335,6 @@ def coordination_check(mol: Molecule) -> List[ValidationIssue]:
 
     for mi in mol.metal_indices:
         m_sym = atoms[mi].symbol
-        m_pos = atoms[mi].position
 
         # All non-metal atoms and their distances from this metal
         donor_dists = [

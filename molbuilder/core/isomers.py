@@ -27,7 +27,7 @@ Currently implemented geometries:
 from __future__ import annotations
 from itertools import permutations
 from collections import Counter
-from typing import List, Tuple, Dict
+from typing import List, Dict
 
 
 # ──────────────────────────────────────────────────────────────────────────────
