@@ -194,6 +194,7 @@ def run_energetics(
     try:
         from molbuilder.relaxation import (
             relax, thermochemistry, compare_backends, check_bonds_intact,
+            xtb_relax_mace_singlepoint,
         )
     except ImportError as exc:
         raise ImportError(
@@ -264,6 +265,44 @@ def run_energetics(
                     row["relax_dE_mace_xtb_eV"] = comp.get("dE_xtb_vs_mace_eV")
                     if output_dir:
                         _write_relaxed(mace.mol, row, output_dir, "_relaxed_mace")
+
+            elif backend == "xtb+mace":
+                # Hybrid: xTB geometry + frequencies, MACE single-point energy.
+                # G_hybrid = E_MACE + (G_xTB - E_xTB)  — thermal correction transfer.
+                res = xtb_relax_mace_singlepoint(
+                    mol,
+                    xtb_model       = xtb_model,
+                    mace_model      = mace_model,
+                    mace_device     = mace_device,
+                    compute_thermo  = compute_thermo,
+                    T=T, P=P, fmax=fmax, steps=steps,
+                    constrain_bonds = constrain_bonds,
+                )
+                row["relax_energy_eV"]      = round(float(getattr(res, "_xtb_energy_eV", res.energy_eV)), 6)
+                row["relax_mace_energy_eV"] = round(float(res.energy_eV), 6)
+                row["relax_converged"]      = bool(res.converged)
+                row["relax_steps"]          = int(res.steps)
+                row["relax_backend"]        = res.backend
+                row["relax_model"]          = res.model
+                if compute_thermo:
+                    row["relax_gibbs_eV"]     = round(res.gibbs_eV, 6)
+                    row["relax_zpe_eV"]       = round(res.zpe_eV, 6)
+                    row["relax_enthalpy_eV"]  = round(res.enthalpy_eV, 6)
+                    row["relax_entropy_eV_K"] = round(res.entropy_eV_K, 8)
+                    row["relax_T_K"] = T; row["relax_P_Pa"] = P
+                    # Store hybrid Gibbs separately as well
+                    row["relax_mace_gibbs_eV"] = row["relax_gibbs_eV"]
+                    row["relax_dE_mace_xtb_eV"] = round(
+                        row["relax_mace_energy_eV"] - row["relax_energy_eV"], 6)
+
+                bc = check_bonds_intact(mol, res.mol)
+                row["bond_max_elongation"] = bc["max_elongation"]
+                row["bond_n_broken"]       = len(bc["broken_bonds"])
+                row["bond_status"]         = _bond_status(bc["max_elongation"])
+
+                if output_dir:
+                    rp = _write_relaxed(res.mol, row, output_dir, "_relaxed_xtb")
+                    row["relax_filename"] = str(rp)
 
             else:
                 # Single backend

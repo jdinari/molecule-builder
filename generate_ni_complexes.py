@@ -37,11 +37,16 @@ REACTIONS_PLOT  = Path("ni_reaction_network.png")
 #
 # COMPUTE_ENERGY   True  →  relax every structure and compute ΔG(T,P)
 #
-# ENERGY_BACKEND   "xtb"   GFN2-xTB via tblite (recommended for Ni)
-#                          pip install tblite ase
-#                  "mace"  MACE-MH-1 universal MLIP (faster on GPU)
-#                          pip install mace-torch ase
-#                  "both"  Run both backends and compare
+# ENERGY_BACKEND   "xtb"      GFN2-xTB via tblite (fast, ~0.2–0.5 eV accuracy)
+#                             pip install tblite ase
+#                  "mace"     MACE-MH-1 universal MLIP (better energies, needs GPU)
+#                             pip install mace-torch ase
+#                  "xtb+mace" RECOMMENDED HYBRID: xTB geometry + frequencies,
+#                             MACE single-point energy, thermal correction transfer.
+#                             G_hybrid = E_MACE + (G_xTB - E_xTB)
+#                             ~DFT-quality energies with xTB-quality geometries.
+#                             pip install tblite mace-torch ase
+#                  "both"     Run both backends fully and compare
 #
 # COMPUTE_THERMO   True  →  freq calculation → ΔG(T,P)  (default: True)
 #                  False →  geometry relax only → ΔE
@@ -52,7 +57,7 @@ REACTIONS_PLOT  = Path("ni_reaction_network.png")
 
 COMPUTE_ENERGY  = False
 COMPUTE_THERMO  = True           # ΔG by default (set False for ΔE only)
-ENERGY_BACKEND  = "xtb"
+ENERGY_BACKEND  = "xtb+mace"        # xTB relax + MACE SP energy (recommended hybrid)
 XTB_MODEL       = None           # None → GFN2-xTB
 MACE_MODEL      = None           # None → mh-1; or "/path/to/mace-mh-1.model"
 MACE_DEVICE     = "cpu"          # "cpu" or "cuda"
@@ -172,14 +177,50 @@ if __name__ == "__main__":
                     g   = row.get("relax_gibbs_eV")
                     if e: net.graph.nodes[nid]["energy_eV"] = e
                     if g: net.graph.nodes[nid]["gibbs_eV"]  = g
-            # Still need reference molecule energies
-            from molbuilder.relaxation import compute_energy as _ce
-            for nid, data in net.graph.nodes(data=True):
-                if data.get("node_type") == "reference":
-                    try:
-                        res = _ce(data["mol"], backend=ENERGY_BACKEND)
-                        net.graph.nodes[nid]["energy_eV"] = float(res.energy_eV)
-                    except Exception: pass
+            # Still need reference molecule energies (HCOOH, H2O, H2).
+            # Use the same backend as the complexes for consistency.
+            # For xtb+mace hybrid: use xtb_relax_mace_singlepoint so that
+            # isodesmic cancellation works properly (same level on both sides).
+            print("  Computing reference molecule energies (HCOOH, H2O, H2) …")
+            _eff_backend = ENERGY_BACKEND.lower()
+            if COMPUTE_THERMO:
+                if _eff_backend == "xtb+mace":
+                    from molbuilder.relaxation import xtb_relax_mace_singlepoint as _ref_fn
+                    _ref_kwargs = dict(
+                        xtb_model=XTB_MODEL, mace_model=MACE_MODEL,
+                        mace_device=MACE_DEVICE, compute_thermo=True,
+                        T=TEMPERATURE_K, P=PRESSURE_PA,
+                        fmax=RELAX_FMAX, steps=RELAX_STEPS,
+                    )
+                else:
+                    from molbuilder.relaxation import thermochemistry as _ref_fn
+                    _ref_kwargs = dict(
+                        backend=_eff_backend,
+                        T=TEMPERATURE_K, P=PRESSURE_PA,
+                        fmax=RELAX_FMAX, steps=RELAX_STEPS,
+                    )
+                for nid, data in net.graph.nodes(data=True):
+                    if data.get("node_type") == "reference":
+                        try:
+                            res = _ref_fn(data["mol"], **_ref_kwargs)
+                            net.graph.nodes[nid].update(
+                                energy_eV = float(res.energy_eV),
+                                gibbs_eV  = float(res.gibbs_eV),
+                                _therm    = res,
+                            )
+                            print(f"    ref {data['formula']:8s}  "
+                                  f"E={res.energy_eV:.3f}  G={res.gibbs_eV:.3f} eV")
+                        except Exception as exc:
+                            import warnings
+                            warnings.warn(f"Ref energy failed for {data.get('formula','?')}: {exc}")
+            else:
+                from molbuilder.relaxation import compute_energy as _ce
+                for nid, data in net.graph.nodes(data=True):
+                    if data.get("node_type") == "reference":
+                        try:
+                            res = _ce(data["mol"], backend=_eff_backend.replace("+mace","").replace("xtb","xtb"))
+                            net.graph.nodes[nid]["energy_eV"] = float(res.energy_eV)
+                        except Exception: pass
             net._update_edge_energies()
 
         # ── screen ────────────────────────────────────────────────────────────

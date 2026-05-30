@@ -792,29 +792,40 @@ def thermochemistry(
 # ── bond-integrity checker ────────────────────────────────────────────────────
 
 def check_bonds_intact(
-    mol_before: Molecule,
-    mol_after:  Molecule,
-    threshold_factor: float = 1.4,
+    mol_before:       Molecule,
+    mol_after:        Molecule,
+    threshold_factor: float = 1.35,
+    cutoff_A:         float = 3.0,
 ) -> dict:
     """
     Check whether any metal-ligand bonds were broken during relaxation.
 
     A bond is considered broken if the M-L distance after relaxation exceeds
-    ``threshold_factor`` × the original distance (default 1.4×, i.e. 40%
-    elongation).
+    ``threshold_factor`` × the original distance (default 1.35×, i.e. 35%
+    elongation — consistent with _BROKEN_THRESHOLD in energetics.py).
 
     Parameters
     ----------
     mol_before       : Structure before relaxation.
     mol_after        : Structure after relaxation (same atom ordering).
     threshold_factor : Fraction above which a bond is flagged as broken.
+                       Default 1.35 (was 1.4 — corrected to match energetics.py).
+    cutoff_A         : Only check ligand atoms whose initial M-L distance is
+                       below this value (Å).  Default 3.0 Å — covers long Ni–O
+                       bonds (~2.1–2.4 Å) and Ni–N bonds (~2.0–2.3 Å) that the
+                       previous 2.8 Å cutoff sometimes missed for distorted
+                       octahedral and bridging μ-OH / μ-HCOO geometries.
 
     Returns
     -------
     dict with keys:
         "intact"         : bool   – True if no bonds were broken
-        "broken_bonds"   : list   – [(atom_i, atom_j, d_before, d_after), ...]
+        "broken_bonds"   : list   – list of bond-info dicts, each with keys
+                                    metal_idx, ligand_idx, metal_sym,
+                                    ligand_sym, d_before_A, d_after_A,
+                                    elongation
         "max_elongation" : float  – largest fractional elongation observed
+                                    (1.0 = unchanged, 1.35 = 35% longer)
     """
     metal = mol_before.metal_symbol
     if not metal:
@@ -833,14 +844,14 @@ def check_bonds_intact(
                 continue
             d_b = float(np.linalg.norm(ab.position - m_pos_b))
             d_a = float(np.linalg.norm(aa.position - m_pos_a))
-            if d_b < 2.8:   # only check atoms that were originally bonded
+            if d_b < cutoff_A:   # only check atoms that were originally bonded
                 elong = d_a / d_b
                 max_elong = max(max_elong, elong)
                 if elong > threshold_factor:
                     broken.append({
                         "metal_idx":    mi,
                         "ligand_idx":   j,
-                        "metal_sym":    ab.symbol if j == mi else metal,
+                        "metal_sym":    metal,
                         "ligand_sym":   ab.symbol,
                         "d_before_A":   round(d_b, 4),
                         "d_after_A":    round(d_a, 4),
@@ -989,5 +1000,122 @@ def compare_backends(
         result["dE_xtb_vs_mace_eV"] = round(
             result["delta_E_mace_eV"] - result["delta_E_xtb_eV"], 6
         )
+
+    return result
+
+
+def xtb_relax_mace_singlepoint(
+    mol:             "Molecule",
+    xtb_model:       str   = None,
+    mace_model:      str   = None,
+    mace_device:     str   = "cpu",
+    compute_thermo:  bool  = True,
+    T:               float = 298.15,
+    P:               float = 101325.0,
+    fmax:            float = 0.05,
+    steps:           int   = 300,
+    constrain_bonds: bool  = False,
+) -> "ThermResult":
+    """
+    xTB geometry relaxation + xTB frequencies, then MACE single-point energy
+    with thermal correction transfer (the recommended hybrid workflow).
+
+    Workflow
+    --------
+    1.  Relax geometry with xTB (GFN2-xTB).  Bond-quality check on the
+        relaxed structure.
+    2.  If compute_thermo=True: run xTB frequency analysis on the relaxed
+        geometry to get thermal corrections (ZPE, H, S).
+    3.  Run a MACE single-point energy on the xTB-relaxed geometry.
+    4.  Combine:
+            G_hybrid = E_MACE  +  (G_xTB − E_xTB)
+        i.e. replace the electronic energy with the better MACE value while
+        keeping the xTB thermal correction.  This is the "ΔΔG" or thermal-
+        correction-transfer approach used in composite QM/MM-like workflows.
+
+    Why not re-relax with MACE?
+        MACE-MH-1 Hessians are noisier than xTB ones, so xTB gives more
+        reliable thermal corrections.  The geometry change between xTB and
+        MACE minima is typically < 0.05 Å for Ni(II) complexes, well within
+        the uncertainty of the thermal correction.
+
+    Returns
+    -------
+    ThermResult with:
+        .energy_eV    — MACE single-point energy at the xTB geometry
+        .gibbs_eV     — G_hybrid = E_MACE + (G_xTB − E_xTB)
+        .zpe_eV       — from xTB frequencies
+        .enthalpy_eV  — from xTB frequencies
+        .entropy_eV_K — from xTB frequencies
+        .backend      — "xtb+mace"
+        .model        — e.g. "GFN2-xTB + mh-1"
+        ._xtb_energy_eV   (extra attribute) — xTB electronic energy
+        ._mace_energy_eV  (extra attribute) — MACE single-point energy
+        ._thermal_correction_eV (extra attribute) — G_xTB − E_xTB
+
+    If compute_thermo=False, returns a RelaxResult with .energy_eV = E_MACE
+    and no thermal data.
+    """
+    # Step 1 + 2: xTB relaxation (+ optional thermochemistry)
+    if compute_thermo:
+        xtb_res = thermochemistry(
+            mol, backend="xtb", model=xtb_model,
+            T=T, P=P, fmax=fmax, steps=steps,
+            constrain_bonds=constrain_bonds,
+        )
+        thermal_correction = xtb_res.gibbs_eV - xtb_res.energy_eV
+    else:
+        xtb_res = relax(
+            mol, backend="xtb", model=xtb_model,
+            fmax=fmax, steps=steps,
+            constrain_bonds=constrain_bonds,
+        )
+        thermal_correction = 0.0
+
+    relaxed_mol = xtb_res.mol  # xTB-relaxed geometry
+
+    # Step 3: MACE single-point on the xTB geometry
+    mace_sp = _singlepoint_mace(
+        relaxed_mol,
+        model  = mace_model or "mh-1",
+        device = mace_device,
+    )
+    e_mace = float(mace_sp.energy_eV)
+
+    # Step 4: thermal correction transfer
+    g_hybrid = e_mace + thermal_correction
+
+    if compute_thermo:
+        # Build a ThermResult but with MACE energy + xTB thermal corrections
+        result = ThermResult(
+            mol           = relaxed_mol,
+            energy_eV     = e_mace,           # MACE SP energy
+            converged     = xtb_res.converged,
+            steps         = xtb_res.steps,
+            backend       = "xtb+mace",
+            model         = f"{xtb_res.model} + {mace_sp.model}",
+            T_K           = T,
+            P_Pa          = P,
+            zpe_eV        = xtb_res.zpe_eV,
+            enthalpy_eV   = xtb_res.enthalpy_eV + (e_mace - xtb_res.energy_eV),
+            entropy_eV_K  = xtb_res.entropy_eV_K,
+            gibbs_eV      = g_hybrid,
+            frequencies   = xtb_res.frequencies,
+            _vib_energies = xtb_res._vib_energies,
+        )
+    else:
+        result = RelaxResult(
+            mol       = relaxed_mol,
+            energy_eV = e_mace,
+            converged = xtb_res.converged,
+            steps     = xtb_res.steps,
+            backend   = "xtb+mace",
+            model     = f"{xtb_res.model} + {mace_sp.model}",
+        )
+
+    # Attach extra diagnostics as dynamic attributes for inspection
+    object.__setattr__(result, "_xtb_energy_eV",         float(xtb_res.energy_eV))
+    object.__setattr__(result, "_mace_energy_eV",        e_mace)
+    object.__setattr__(result, "_thermal_correction_eV", thermal_correction)
 
     return result

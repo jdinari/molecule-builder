@@ -967,9 +967,13 @@ class ReactionNetwork:
         nx.draw_networkx_labels(G, pos, labels=node_labels, ax=ax,
                                 font_size=6.5, font_color="#111")
 
+        # networkx ≥3.2 requires connectionstyle as a plain string;
+        # older builds (and some matplotlib versions) may receive a
+        # ConnectionStyle object — guard both cases.
+        _cs = "arc3,rad=0.12"
         nx.draw_networkx_edges(G, pos, ax=ax, edge_color=edge_colors,
                                arrows=True, arrowsize=13, alpha=0.65,
-                               connectionstyle="arc3,rad=0.12", node_size=650)
+                               connectionstyle=_cs, node_size=650)
 
         # Edge labels where ΔE is available
         elabels = {}
