@@ -1,13 +1,23 @@
 """
 generate_ni_complexes.py
 ========================
-Generate all neutral Ni(II)/Ni(III) complexes and optionally compute
-xTB/MACE energetics. Flip COMPUTE_ENERGY = True to enable.
+Generate all neutral Ni(II)/Ni(III) coordination complexes, optionally relax
+with xTB or MACE, and build an isodesmic reaction network with ΔG screening.
+
+Workflow
+--------
+1.  Enumerate all monomers, dimers, and trimers from the ligand pool.
+2.  (optional) Relax each structure with xTB or MACE and compute ΔG(T,P).
+3.  Structures with broken bonds are written to poscar/broken/ for review.
+4.  (optional) Build an isodesmic reaction network and screen by ΔG.
+5.  Write CSV, Excel, and a reaction-network CSV for downstream use.
+
+Flip the boolean flags below to enable each stage.
 """
 
 from pathlib import Path
 from molbuilder import enumerate_complexes, write_all, MULTI_BRIDGE_CASES
-from molbuilder.energetics import run_energetics
+from molbuilder.energetics import run_energetics, write_broken_report
 
 # ── Chemistry ─────────────────────────────────────────────────────────────────
 METAL       = "Ni"
@@ -17,44 +27,60 @@ BI_LIGANDS  = ["HCOO:bi"]
 BRIDGE_POOL = ["mu-OH", "mu-HCOO"]
 
 # ── Output ────────────────────────────────────────────────────────────────────
-OUTPUT_DIR  = Path("poscar")
-CSV_FILE    = Path("ni_complexes_summary.csv")
-EXCEL_FILE  = Path("ni_energetics.xlsx")
+OUTPUT_DIR      = Path("poscar")
+CSV_FILE        = Path("ni_complexes_summary.csv")
+EXCEL_FILE      = Path("ni_energetics.xlsx")
+REACTIONS_CSV   = Path("ni_reaction_network.csv")
+REACTIONS_PLOT  = Path("ni_reaction_network.png")
 
-# ── Energy computation (off by default) ───────────────────────────────────────
+# ── Stage 1: Energy computation ───────────────────────────────────────────────
 #
-# COMPUTE_ENERGY  set True to relax every structure and compute ΔE
-# COMPUTE_THERMO  set True (with COMPUTE_ENERGY) to also compute ΔG(T,P)
+# COMPUTE_ENERGY   True  →  relax every structure and compute ΔG(T,P)
 #
-# ENERGY_BACKEND  "xtb"   GFN2-xTB via tblite — best for Ni coordination chemistry,
-#                         handles charge and spin explicitly.
-#                         pip install tblite ase
+# ENERGY_BACKEND   "xtb"   GFN2-xTB via tblite (recommended for Ni)
+#                          pip install tblite ase
+#                  "mace"  MACE-MH-1 universal MLIP (faster on GPU)
+#                          pip install mace-torch ase
+#                  "both"  Run both backends and compare
 #
-#                 "mace"  MACE-MH-1 universal MLIP — faster on GPU, downloads
-#                         ~500 MB model on first use (or set MACE_MODEL to a
-#                         local .model file path).
-#                         pip install mace-torch ase
+# COMPUTE_THERMO   True  →  freq calculation → ΔG(T,P)  (default: True)
+#                  False →  geometry relax only → ΔE
 #
-#                 "both"  Run both and compare ΔE_mace vs ΔE_xtb.
-#
-# CONSTRAIN_BONDS False (default) — bond dissociation is physically meaningful
-#                 information: if a ligand departs during xTB relaxation, the
-#                 coordination is genuinely strained. Broken bonds are flagged
-#                 as "BROKEN" in the CSV/Excel so you can review them before DFT.
-#                 Set True only if you want to preserve the designed coordination
-#                 motif as a DFT seed regardless of whether it's stable.
+# BROKEN STRUCTURES: structures where a bond stretched > 1.35× its initial
+# length during xTB relaxation are automatically written to poscar/broken/
+# with a review report.  They are excluded from the reaction network.
 
 COMPUTE_ENERGY  = False
-COMPUTE_THERMO  = False
+COMPUTE_THERMO  = True           # ΔG by default (set False for ΔE only)
 ENERGY_BACKEND  = "xtb"
-XTB_MODEL       = None          # None → GFN2-xTB
-MACE_MODEL      = None          # None → mh-1; or "/path/to/mace-mh-1.model"
-MACE_DEVICE     = "cpu"         # "cpu" or "cuda"
+XTB_MODEL       = None           # None → GFN2-xTB
+MACE_MODEL      = None           # None → mh-1; or "/path/to/mace-mh-1.model"
+MACE_DEVICE     = "cpu"          # "cpu" or "cuda"
 CONSTRAIN_BONDS = False
 TEMPERATURE_K   = 298.15
 PRESSURE_PA     = 101325.0
 RELAX_FMAX      = 0.05
 RELAX_STEPS     = 300
+
+# ── Stage 2: Reaction network ─────────────────────────────────────────────────
+#
+# COMPUTE_REACTIONS  True  →  build isodesmic reaction network and screen
+#
+# The reaction network requires COMPUTE_ENERGY = True to produce meaningful
+# ΔG values.  Without energetics it still shows connectivity but all ΔG = None.
+#
+# Reactions included (all isodesmic — neutral refs only, same total charge):
+#   SUBSTITUTION:   HCOOH + [Ni-OH]  →  [Ni-HCOO] + H₂O      (formic acid route)
+#                   H₂O   + [Ni-OH]  →  [Ni-H₂O]  + OH        (water exchange)
+#   COORDINATION:   [Ni(L)_n] + H₂O  →  [Ni(L)_n(H₂O)]       (CN increases)
+#   ASSOCIATION:    2×monomer         →  dimer  + n×H₂O
+#
+# Structures with bond_status == BROKEN are excluded from the network.
+# They appear in broken_structures and are written to poscar/broken/.
+
+COMPUTE_REACTIONS   = False
+REACTION_MAX_DG     = 0.5        # eV — screen threshold for "accessible" reactions
+REACTION_TYPES      = None       # None = all; or e.g. ["substitution"]
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 
@@ -89,6 +115,7 @@ if __name__ == "__main__":
     print(f"  Total                 : {len(rows)}")
     print(f"{'='*55}")
 
+    # ── Stage 1: energetics ───────────────────────────────────────────────────
     if COMPUTE_ENERGY:
         mol_lookup = {r["filename"]: m for m, r in zip(mols_in_order, rows)}
         rows = run_energetics(
@@ -100,7 +127,92 @@ if __name__ == "__main__":
             mace_device=MACE_DEVICE, constrain_bonds=CONSTRAIN_BONDS,
             output_dir=OUTPUT_DIR, csv_file=CSV_FILE, excel_file=EXCEL_FILE,
         )
+
+        # ── broken-structure report ───────────────────────────────────────────
+        broken = [(mols_in_order[i], rows[i])
+                  for i, r in enumerate(rows)
+                  if r.get("bond_status") == "BROKEN"]
+        if broken:
+            write_broken_report(broken, OUTPUT_DIR, verbose=True)
     else:
         from molbuilder.output.writer import write_csv
         write_csv(rows, CSV_FILE)
         print(f"  CSV → {CSV_FILE}")
+
+    # ── Stage 2: reaction network ─────────────────────────────────────────────
+    if COMPUTE_REACTIONS:
+        from molbuilder.reactions import ReactionNetwork, ReactionType
+
+        print(f"\nBuilding reaction network …")
+        mol_lookup = {r["filename"]: m for m, r in zip(mols_in_order, rows)}
+        mols_and_rows = [(mol_lookup[r["filename"]], r) for r in rows
+                         if r.get("filename") in mol_lookup]
+
+        net = ReactionNetwork(mols_and_rows, bond_filter=True, verbose=True)
+        print(net.summary())
+
+        # Compute ΔG on every node if not already done via run_energetics
+        if not COMPUTE_ENERGY:
+            print("\nComputing xTB ΔG for reaction network nodes …")
+            net.compute_energies(
+                backend        = ENERGY_BACKEND,
+                compute_thermo = COMPUTE_THERMO,
+                T              = TEMPERATURE_K,
+                P              = PRESSURE_PA,
+                fmax           = RELAX_FMAX,
+                steps          = RELAX_STEPS,
+                verbose        = True,
+            )
+        else:
+            # Energies already in rows — attach directly from row data
+            for nid, data in net.graph.nodes(data=True):
+                if data.get("node_type") == "complex":
+                    row = data.get("row", {})
+                    e   = row.get("relax_energy_eV")
+                    g   = row.get("relax_gibbs_eV")
+                    if e: net.graph.nodes[nid]["energy_eV"] = e
+                    if g: net.graph.nodes[nid]["gibbs_eV"]  = g
+            # Still need reference molecule energies
+            from molbuilder.relaxation import compute_energy as _ce
+            for nid, data in net.graph.nodes(data=True):
+                if data.get("node_type") == "reference":
+                    try:
+                        res = _ce(data["mol"], backend=ENERGY_BACKEND)
+                        net.graph.nodes[nid]["energy_eV"] = float(res.energy_eV)
+                    except Exception: pass
+            net._update_edge_energies()
+
+        # ── screen ────────────────────────────────────────────────────────────
+        print(f"\nScreening reactions with ΔG ≤ {REACTION_MAX_DG} eV …")
+        hits = net.screen(
+            max_dE          = REACTION_MAX_DG,
+            use_gibbs       = COMPUTE_THERMO,
+            reaction_types  = REACTION_TYPES,
+            require_energy  = True,
+        )
+        e_or_g = "ΔG" if COMPUTE_THERMO else "ΔE"
+        print(f"  {len(hits)} reaction(s) with {e_or_g} ≤ {REACTION_MAX_DG} eV:")
+        for src, dst, e, val in hits[:20]:
+            print(f"    {val:+.3f} eV  {net.reaction_str(src, dst)}")
+        if len(hits) > 20:
+            print(f"    … and {len(hits)-20} more")
+
+        # ── export ────────────────────────────────────────────────────────────
+        df = net.to_dataframe()
+        df.to_csv(REACTIONS_CSV, index=False)
+        print(f"\n  Reaction network CSV → {REACTIONS_CSV}")
+
+        try:
+            fig = net.plot(
+                title=f"Ni reaction network  ({e_or_g})",
+                edge_label="delta_g" if COMPUTE_THERMO else "delta_e",
+            )
+            fig.savefig(REACTIONS_PLOT, dpi=150, bbox_inches="tight")
+            import matplotlib.pyplot as plt; plt.close(fig)
+            print(f"  Reaction network plot → {REACTIONS_PLOT}")
+        except Exception as exc:
+            print(f"  (plot skipped: {exc})")
+
+        # ── broken-structure reminder ─────────────────────────────────────────
+        if net.broken_structures:
+            write_broken_report(net.broken_structures, OUTPUT_DIR, verbose=True)

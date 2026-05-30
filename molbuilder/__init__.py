@@ -23,7 +23,11 @@ from molbuilder.relaxation import (
     RelaxResult, ThermResult,
 )
 from molbuilder.energetics import (
-    run_energetics, molecule_name, BondStatus,
+    run_energetics, molecule_name, BondStatus, write_broken_report,
+)
+from molbuilder.reactions import ReactionNetwork, ReactionType
+from molbuilder.graph import (
+    canonical_hash, MolGraph, deduplicate, DeduplicationResult,
 )
 from molbuilder.exceptions import (
     MolbuilderError,
@@ -60,6 +64,10 @@ __all__ = [
     "RelaxResult", "ThermResult",
     # energetics pipeline
     "run_energetics", "molecule_name", "BondStatus",
+    # reactions
+    "ReactionNetwork", "ReactionType",
+    # graph (beta)
+    "canonical_hash", "MolGraph", "deduplicate", "DeduplicationResult",
     # exceptions
     "MolbuilderError", "InvalidLigandError", "GeometryError",
     "ClashError", "CoordinationError", "ChargeError", "ValidationError",

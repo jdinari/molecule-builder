@@ -122,3 +122,34 @@ workaround; instead, review broken-bond structures before passing them to DFT.
 - CN=7 (pentagonal bipyramidal) structures with ≥2 H-bearing ligands may have
   unavoidable H-H contacts at ideal geometry and are filtered out of the
   enumeration automatically.
+
+## Tutorial 07 — Reaction network and ΔG screening
+
+**File:** `07_reaction_network.py`
+
+Builds a directed reaction graph for a set of Ni(II) monomers and dimers,
+computes ΔG for every node with xTB thermochemistry, and screens for
+thermodynamically accessible reactions.
+
+Topics covered:
+
+**The formic acid route** — the reaction `HCOOH + [Ni–OH] → [Ni–HCOO] + H₂O`
+is the physically correct way to model formate coordination in a neutral-only
+gas-phase inventory.  HCOOH donates HCOO⁻ while protonating the coordinated
+OH⁻ to release water.  Both sides are neutral and charge-balanced — the ΔG is
+fully reliable with xTB.
+
+**Bond-broken structures** — any structure where a M-L bond stretched > 1.35×
+its initial length during xTB relaxation is excluded from the reaction network
+and written to `out/broken/` with a review report.  These are the structures
+you should inspect before submitting them to DFT.
+
+**Screening** — `net.screen(max_dE=0.5, use_gibbs=True)` returns all
+reactions with ΔG ≤ 0.5 eV, sorted ascending.  These are the reactions most
+likely to occur spontaneously and most worth computing at the DFT level.
+
+```bash
+python tutorials/07_reaction_network.py
+```
+
+Requires: `pip install tblite ase matplotlib pandas`

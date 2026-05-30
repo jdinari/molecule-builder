@@ -349,3 +349,77 @@ def run_energetics(
             print(f"  XLSX → {excel_file}")
 
     return updated
+
+
+# ── broken-structure reporting ────────────────────────────────────────────────
+
+def write_broken_report(
+    broken: list,
+    output_dir,
+    verbose: bool = True,
+) -> None:
+    """
+    Write a dedicated report for structures with bond_status == BROKEN.
+
+    Creates:
+        <output_dir>/broken/broken_structures.csv   — CSV with all broken rows
+        <output_dir>/broken/*.POSCAR                — original (pre-relax) POSCARs
+
+    Parameters
+    ----------
+    broken  : list of (mol, row) pairs where bond_status == "BROKEN".
+              Typically from ReactionNetwork.broken_structures or
+              filtered from run_energetics output rows.
+    output_dir : root output directory (Path or str).
+    verbose : print a summary.
+    """
+    from pathlib import Path
+    from molbuilder.output.writer import write_csv, write_poscar
+
+    if not broken:
+        return
+
+    broken_dir = Path(output_dir) / "broken"
+    broken_dir.mkdir(parents=True, exist_ok=True)
+
+    rows_out = []
+    for mol, row in broken:
+        # Copy POSCAR to broken/ subdir
+        orig = Path(row.get("filename", "unknown.POSCAR"))
+        dest = broken_dir / orig.name
+        try:
+            write_poscar(mol, dest)
+        except Exception:
+            pass
+
+        rows_out.append({**row,
+                         "bond_status":    "BROKEN",
+                         "review_needed":  True,
+                         "broken_poscar":  str(dest),
+                         })
+
+    csv_path = broken_dir / "broken_structures.csv"
+    write_csv(rows_out, csv_path)
+
+    if verbose:
+        print()
+        print("=" * 60)
+        print(f"  ⚠  {len(broken)} BROKEN STRUCTURE(S) — REVIEW BEFORE DFT")
+        print("=" * 60)
+        for mol, row in broken:
+            geom  = row.get("geometry", "?")
+            ligs  = row.get("ligand_combo", "?")
+            elong = row.get("bond_max_elongation")
+            e_str = f"  max_elong={elong:.2f}×" if elong else ""
+            print(f"  • {mol.formula:15s}  [{geom}] {ligs}{e_str}")
+        print(f"\n  POSCARs → {broken_dir}/")
+        print(f"  CSV     → {csv_path}")
+        print("=" * 60)
+        print()
+        print("  These structures had at least one M-L bond stretch > 1.35× its")
+        print("  initial length during xTB relaxation, suggesting the coordination")
+        print("  mode is strained or a ligand dissociated.  Options:")
+        print("   1. Inspect the POSCAR manually and fix the geometry.")
+        print("   2. Re-run with constrain_bonds=True to force the topology.")
+        print("   3. Discard — if xTB says it's unstable, DFT likely will too.")
+        print("=" * 60)
