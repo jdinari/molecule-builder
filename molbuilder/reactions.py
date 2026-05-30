@@ -178,7 +178,10 @@ def _parse_combo(combo: str) -> Counter:
         if not part:
             continue
         m = re.match(r"([A-Za-z0-9:]+?)(\d+)$", part)
-        counts[m.group(1)] += int(m.group(2)) if m else counts.__setitem__(part, counts.get(part, 0) + 1) or 1
+        if m:
+            counts[m.group(1)] += int(m.group(2))
+        else:
+            counts[part] += 1
     return counts
 
 
