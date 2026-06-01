@@ -84,6 +84,9 @@ COMPUTE_ENERGY = False
 #               G_hybrid = E_MACE + (G_xTB - E_xTB)
 #               Near-DFT energy quality with xTB-quality geometries.
 #               Install: pip install tblite mace-torch ase
+#               NOTE: requires COMPUTE_ENERGY = True to take effect.
+#               If COMPUTE_REACTIONS = True but COMPUTE_ENERGY = False,
+#               the reaction network falls back to pure xTB automatically.
 #
 #   "both"      Run both backends fully and compare.
 #
@@ -255,9 +258,21 @@ if __name__ == "__main__":
         # Attach energies: either from run_energetics (already in rows),
         # or compute them now if COMPUTE_ENERGY was False.
         if not COMPUTE_ENERGY:
-            print("\nComputing xTB ΔG for reaction network nodes …")
+            # net.compute_energies() calls thermochemistry() internally, which
+            # only accepts "xtb" or "mace" — the "xtb+mace" hybrid is handled
+            # by xtb_relax_mace_singlepoint() and is only available through
+            # run_energetics() (Stage 1).  Map the hybrid down to "xtb" here
+            # so the reaction network still gets valid energies; the MACE
+            # single-point uplift requires Stage 1 to have already run.
+            _network_backend = ENERGY_BACKEND.lower()
+            if _network_backend == "xtb+mace":
+                _network_backend = "xtb"
+                print("\n  Note: xtb+mace hybrid is not available via net.compute_energies().")
+                print("        Using pure xTB for reaction network energies.")
+                print("        For MACE-corrected ΔG, set COMPUTE_ENERGY = True first.")
+            print("\nComputing ΔG for reaction network nodes …")
             net.compute_energies(
-                backend        = ENERGY_BACKEND,
+                backend        = _network_backend,
                 compute_thermo = COMPUTE_THERMO,
                 T              = TEMPERATURE_K,
                 P              = PRESSURE_PA,
