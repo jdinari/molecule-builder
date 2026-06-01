@@ -14,16 +14,16 @@ Two backends are supported and can be used interchangeably:
 
 Public API
 ----------
-    relax(mol, ...)              → RelaxResult  (geometry only)
-    compute_energy(mol, ...)     → RelaxResult  (single-point, no geometry change)
-    compute_gibbs(mol, ...)      → ThermResult  (freq + thermo at one T/P)
-    thermochemistry(mol, ...)    → ThermResult  (relax + freq + thermo)
+    relax(mol, ...)              -> RelaxResult  (geometry only)
+    compute_energy(mol, ...)     -> RelaxResult  (single-point, no geometry change)
+    compute_gibbs(mol, ...)      -> ThermResult  (freq + thermo at one T/P)
+    thermochemistry(mol, ...)    -> ThermResult  (relax + freq + thermo)
 
 ThermResult extends RelaxResult and adds:
     .zpe_eV           zero-point energy
     .enthalpy_eV      H(T) = E + ZPE + H_thermal
     .entropy_eV_per_K S(T, P)  (gas-phase, harmonic/rigid-rotor/PIAB)
-    .gibbs_eV         G(T, P) = H - T·S  at the construction T, P
+    .gibbs_eV         G(T, P) = H - T*S  at the construction T, P
     .gibbs_at(T, P)   recompute G at any other T, P without re-running
 
 All energies are in eV for consistency with VASP outputs.
@@ -35,11 +35,11 @@ The harmonic oscillator / rigid-rotor / particle-in-a-box model is used:
     S(T,P) = S_trans(T,P) + S_rot(T) + S_vib(T)
 
 The pressure P enters only through the translational partition function
-(S_trans ∝ -R·ln(P)), so it matters when reactions change the number of
-molecules (e.g. ligand dissociation Ni-L → Ni + L releases one molecule).
+(S_trans proportional to -R*ln(P)), so it matters when reactions change the number of
+molecules (e.g. ligand dissociation Ni-L -> Ni + L releases one molecule).
 Standard conditions: T = 298.15 K, P = 101325 Pa (1 atm).
 
-ΔE and ΔG for reactions
+DeltaE and DeltaG for reactions
 -----------------------
 Compute the relevant quantity for each species, then subtract:
 
@@ -47,7 +47,7 @@ Compute the relevant quantity for each species, then subtract:
     dE = results["product"].energy_eV - results["reactant"].energy_eV
     dG = results["product"].gibbs_eV  - results["reactant"].gibbs_eV
 
-    # Re-evaluate ΔG at a different temperature without re-running:
+    # Re-evaluate DeltaG at a different temperature without re-running:
     dG_350K = (results["product"].gibbs_at(T=350)
                - results["reactant"].gibbs_at(T=350))
 """
@@ -65,18 +65,18 @@ import numpy as np
 
 from molbuilder.core.molecule import Atom, Molecule
 
-# ── physical constants ────────────────────────────────────────────────────────
+# -- physical constants --------------------------------------------------------
 _eV_per_Hartree = 27.211386245988
-_eV_per_kcal    = 0.043364104  # kcal/mol → eV
+_eV_per_kcal    = 0.043364104  # kcal/mol -> eV
 _kB_eV          = 8.617333262e-5   # Boltzmann in eV/K
 _kB_J           = 1.380649e-23     # Boltzmann in J/K
-_hbar_eV_s      = 6.582119569e-16  # ħ in eV·s
+_hbar_eV_s      = 6.582119569e-16  # hbar in eV*s
 _u_kg           = 1.66053906660e-27  # atomic mass unit in kg
 _NA             = 6.02214076e23
 _R_eV_per_K     = _kB_eV * _NA      # gas constant in eV/K/mol (= 8.617e-5 * 6.022e23)
 
 
-# ── result dataclasses ────────────────────────────────────────────────────────
+# -- result dataclasses --------------------------------------------------------
 
 @dataclass
 class RelaxResult:
@@ -120,8 +120,8 @@ class ThermResult(RelaxResult):
     zpe_eV       : Zero-point vibrational energy.
     enthalpy_eV  : H(T) = E_elec + ZPE + H_thermal(T).
     entropy_eV_K : S(T, P) in eV/K (= S in eV when multiplied by T).
-    gibbs_eV     : G(T, P) = H(T) - T·S(T, P).
-    frequencies  : Vibrational frequencies in cm⁻¹ (imaginary → negative).
+    gibbs_eV     : G(T, P) = H(T) - T*S(T, P).
+    frequencies  : Vibrational frequencies in cm-1 (imaginary -> negative).
     _vib_energies: Internal list of real vibrational energies in eV (for
                    recomputing G at different T/P via gibbs_at()).
     """
@@ -176,7 +176,7 @@ class ThermResult(RelaxResult):
                 f"backend={self.backend}/{self.model})")
 
 
-# ── ASE conversion helpers ────────────────────────────────────────────────────
+# -- ASE conversion helpers ----------------------------------------------------
 
 def _mol_to_ase(mol: Molecule):
     """Convert a molbuilder Molecule to an ASE Atoms object."""
@@ -212,7 +212,7 @@ def _ase_to_mol(atoms, original_mol: Molecule) -> Molecule:
     return Molecule.from_dict(d)
 
 
-# ── thermochemistry helper ────────────────────────────────────────────────────
+# -- thermochemistry helper ----------------------------------------------------
 
 def _harmonic_gibbs(
     e_elec:  float,
@@ -292,7 +292,7 @@ def _run_vibrations(atoms, calc, mol: Molecule,
     atoms.calc = calc
     vib = Vibrations(atoms, name=str(workdir / "vib"))
     vib.run()
-    energies_eV = vib.get_energies()   # complex array; imaginary → imag part
+    energies_eV = vib.get_energies()   # complex array; imaginary -> imag part
 
     if cleanup:
         import shutil
@@ -304,7 +304,7 @@ def _run_vibrations(atoms, calc, mol: Molecule,
     return list(energies_eV)
 
 
-# ── backend: xTB ─────────────────────────────────────────────────────────────
+# -- backend: xTB -------------------------------------------------------------
 
 def _xtb_calculator(mol: Molecule, method: str = "GFN2-xTB"):
     """Return a tblite ASE calculator configured for this molecule."""
@@ -418,7 +418,7 @@ def _thermo_xtb(mol: Molecule, method: str, fmax: float,
     S_eV_K = thermo.get_entropy(T, P, verbose=False)   # eV/K
     G_eV   = H_eV - T * S_eV_K
 
-    # Frequencies in cm⁻¹ for the result object
+    # Frequencies in cm-1 for the result object
     freqs_cm1 = [e / (_hbar_eV_s * 2 * np.pi * 2.998e10) for e in vib_eV]
 
     return ThermResult(
@@ -439,22 +439,34 @@ def _thermo_xtb(mol: Molecule, method: str, fmax: float,
     )
 
 
-# ── backend: MACE ─────────────────────────────────────────────────────────────
+# -- backend: MACE -------------------------------------------------------------
 
 def _mace_calculator(mol: Molecule, model: str, device: str,
                      dtype: str = "float64"):
     """Return a MACE ASE calculator."""
+    import io, sys
     from mace.calculators import mace_mp
     # head="omol" selects the molecular/organics head in MACE-MH models,
     # which is trained on OMOL/OC20 data with wB97M-V references and is
     # the most appropriate for coordination complex geometry optimisation.
-    calc = mace_mp(
-        model         = model,
-        device        = device,
-        default_dtype = dtype,
-        dispersion    = False,
-        head          = "omol",
-    )
+    #
+    # Suppress the torch weight-loading UserWarning and the "Using Materials
+    # Project MACE" print that mace_mp emits on every calculator creation.
+    _devnull = io.StringIO()
+    _old_stdout, _old_stderr = sys.stdout, sys.stderr
+    sys.stdout = sys.stderr = _devnull
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            calc = mace_mp(
+                model         = model,
+                device        = device,
+                default_dtype = dtype,
+                dispersion    = False,
+                head          = "omol",
+            )
+    finally:
+        sys.stdout, sys.stderr = _old_stdout, _old_stderr
     # MACE does not natively accept charge/spin in the ASE calculator interface
     # for mace_mp models; these are encoded in the training data implicitly.
     # For charged systems the user should verify results against xTB/DFT.
@@ -587,7 +599,7 @@ def _thermo_mace(mol: Molecule, model: str, device: str,
     )
 
 
-# ── public API ────────────────────────────────────────────────────────────────
+# -- public API ----------------------------------------------------------------
 
 def relax(
     mol: Molecule,
@@ -606,17 +618,17 @@ def relax(
     mol             : Input Molecule (unrelaxed).
     backend         : "xtb" or "mace".
     model           : Override the default model.
-    fmax            : Force convergence threshold in eV/Å.
+    fmax            : Force convergence threshold in eV/Angstrom.
     steps           : Maximum optimiser steps.
     device          : "cpu" or "cuda" (MACE only).
     constrain_bonds : If True, add Hookean spring constraints on all M-L bonds
                       so that ligands cannot dissociate during optimisation.
                       The springs only activate when a bond is stretched
-                      >1.35× its initial length; normal geometry changes are
+                      >1.35x its initial length; normal geometry changes are
                       unaffected.
 
                       **Default is False.**  Bond dissociation during xTB/MACE
-                      relaxation is physically meaningful — if a ligand
+                      relaxation is physically meaningful -- if a ligand
                       departs, xTB is telling you that coordination is
                       genuinely strained.  The recommended workflow is:
 
@@ -654,7 +666,7 @@ def compute_energy(
     """
     Single-point electronic energy at the input geometry (no relaxation).
 
-    Useful for computing ΔE between structures that have already been
+    Useful for computing DeltaE between structures that have already been
     relaxed, or for a quick energy estimate without geometry change.
 
     Parameters
@@ -729,7 +741,7 @@ def thermochemistry(
     """
     Full thermochemistry pipeline: geometry relaxation + frequency analysis.
 
-    This is the recommended function for obtaining ΔE and ΔG for reactions.
+    This is the recommended function for obtaining DeltaE and DeltaG for reactions.
     It combines relax() and compute_gibbs() in one call.
 
     Parameters
@@ -738,26 +750,26 @@ def thermochemistry(
     backend : "xtb" (recommended for Ni coordination chemistry) or "mace".
     model   : Override the default model.
               xTB default "GFN2-xTB"; MACE default "mh-1" (MACE-MH-1).
-    T       : Temperature in K.  Default 298.15 K (25 °C).
+    T       : Temperature in K.  Default 298.15 K (25 degC).
     P       : Pressure in Pa.    Default 101325 Pa (1 atm).
-    fmax    : Force convergence threshold in eV/Å.
+    fmax    : Force convergence threshold in eV/Angstrom.
     steps   : Maximum optimiser steps.
     device  : "cpu" or "cuda" (MACE only).
 
     Returns
     -------
     ThermResult with:
-        .energy_eV     — electronic energy of the relaxed structure
-        .zpe_eV        — zero-point energy
-        .enthalpy_eV   — H(T)
-        .entropy_eV_K  — S(T, P) in eV/K
-        .gibbs_eV      — G(T, P) = H(T) - T·S(T, P)
-        .gibbs_at(T,P) — recompute G at any other (T, P) without re-running
-        .frequencies   — vibrational frequencies in cm⁻¹
+        .energy_eV     -- electronic energy of the relaxed structure
+        .zpe_eV        -- zero-point energy
+        .enthalpy_eV   -- H(T)
+        .entropy_eV_K  -- S(T, P) in eV/K
+        .gibbs_eV      -- G(T, P) = H(T) - T*S(T, P)
+        .gibbs_at(T,P) -- recompute G at any other (T, P) without re-running
+        .frequencies   -- vibrational frequencies in cm-1
 
     Example
     -------
-    Compute ΔG for Ni(H₂O)₆ → Ni(HCOO)(H₂O)₅ + H₂O at 350 K:
+    Compute DeltaG for Ni(H2O)6 -> Ni(HCOO)(H2O)5 + H2O at 350 K:
 
         from molbuilder import build, trimer
         from molbuilder.relaxation import thermochemistry
@@ -789,7 +801,7 @@ def thermochemistry(
         raise ValueError(f"Unknown backend '{backend}'. Choose 'xtb' or 'mace'.")
 
 
-# ── bond-integrity checker ────────────────────────────────────────────────────
+# -- bond-integrity checker ----------------------------------------------------
 
 def check_bonds_intact(
     mol_before:       Molecule,
@@ -801,30 +813,30 @@ def check_bonds_intact(
     Check whether any metal-ligand bonds were broken during relaxation.
 
     A bond is considered broken if the M-L distance after relaxation exceeds
-    ``threshold_factor`` × the original distance (default 1.35×, i.e. 35%
-    elongation — consistent with _BROKEN_THRESHOLD in energetics.py).
+    ``threshold_factor`` x the original distance (default 1.35x, i.e. 35%
+    elongation -- consistent with _BROKEN_THRESHOLD in energetics.py).
 
     Parameters
     ----------
     mol_before       : Structure before relaxation.
     mol_after        : Structure after relaxation (same atom ordering).
     threshold_factor : Fraction above which a bond is flagged as broken.
-                       Default 1.35 (was 1.4 — corrected to match energetics.py).
+                       Default 1.35 (was 1.4 -- corrected to match energetics.py).
     cutoff_A         : Only check ligand atoms whose initial M-L distance is
-                       below this value (Å).  Default 3.0 Å — covers long Ni–O
-                       bonds (~2.1–2.4 Å) and Ni–N bonds (~2.0–2.3 Å) that the
-                       previous 2.8 Å cutoff sometimes missed for distorted
-                       octahedral and bridging μ-OH / μ-HCOO geometries.
+                       below this value (Angstrom).  Default 3.0 Angstrom -- covers long Ni-O
+                       bonds (~2.1-2.4 Angstrom) and Ni-N bonds (~2.0-2.3 Angstrom) that the
+                       previous 2.8 Angstrom cutoff sometimes missed for distorted
+                       octahedral and bridging mu-OH / mu-HCOO geometries.
 
     Returns
     -------
     dict with keys:
-        "intact"         : bool   – True if no bonds were broken
-        "broken_bonds"   : list   – list of bond-info dicts, each with keys
+        "intact"         : bool   - True if no bonds were broken
+        "broken_bonds"   : list   - list of bond-info dicts, each with keys
                                     metal_idx, ligand_idx, metal_sym,
                                     ligand_sym, d_before_A, d_after_A,
                                     elongation
-        "max_elongation" : float  – largest fractional elongation observed
+        "max_elongation" : float  - largest fractional elongation observed
                                     (1.0 = unchanged, 1.35 = 35% longer)
     """
     metal = mol_before.metal_symbol
@@ -872,14 +884,14 @@ def _add_ml_constraints(atoms, mol: Molecule,
     Add Hookean spring constraints on all metal-ligand bonds.
 
     Each M-L bond gets a spring that activates when the bond is stretched
-    beyond ``max_stretch_factor`` × its initial length.  This prevents
+    beyond ``max_stretch_factor`` x its initial length.  This prevents
     dissociation without constraining the bond geometry for normal relaxation.
 
     Parameters
     ----------
     atoms            : ASE Atoms object (modified in-place).
     mol              : Original Molecule (used to identify metal and bonding).
-    force_constant   : Spring constant in eV/Å².
+    force_constant   : Spring constant in eV/Angstrom2.
     max_stretch_factor : Fraction above equilibrium at which spring kicks in.
     """
     from ase.constraints import Hookean
@@ -906,7 +918,7 @@ def _add_ml_constraints(atoms, mol: Molecule,
         atoms.set_constraint(list(existing) + constraints)
 
 
-# ── compare_backends ──────────────────────────────────────────────────────────
+# -- compare_backends ----------------------------------------------------------
 
 def compare_backends(
     mol: Molecule,
@@ -926,7 +938,7 @@ def compare_backends(
     Parameters
     ----------
     mol            : Input Molecule.
-    T, P           : Temperature (K) and pressure (Pa) for ΔG.
+    T, P           : Temperature (K) and pressure (Pa) for DeltaG.
     fmax, steps    : Geometry optimiser settings.
     xtb_model      : Override xTB model (default GFN2-xTB).
     mace_model     : Override MACE model (default mh-1).
@@ -959,7 +971,7 @@ def compare_backends(
         "T_K": T, "P_Pa": P,
     }
 
-    # ── xTB ──────────────────────────────────────────────────────────────────
+    # -- xTB ------------------------------------------------------------------
     try:
         if compute_thermo:
             xtb_res = thermochemistry(
@@ -977,7 +989,7 @@ def compare_backends(
     except Exception as exc:
         warnings.warn(f"xTB failed for {mol.formula}: {exc}", stacklevel=2)
 
-    # ── MACE ─────────────────────────────────────────────────────────────────
+    # -- MACE -----------------------------------------------------------------
     try:
         if compute_thermo:
             mace_res = thermochemistry(
@@ -995,7 +1007,7 @@ def compare_backends(
     except Exception as exc:
         warnings.warn(f"MACE failed for {mol.formula}: {exc}", stacklevel=2)
 
-    # ── cross-backend comparison ──────────────────────────────────────────────
+    # -- cross-backend comparison ----------------------------------------------
     if result["delta_E_xtb_eV"] is not None and result["delta_E_mace_eV"] is not None:
         result["dE_xtb_vs_mace_eV"] = round(
             result["delta_E_mace_eV"] - result["delta_E_xtb_eV"], 6
@@ -1028,30 +1040,30 @@ def xtb_relax_mace_singlepoint(
         geometry to get thermal corrections (ZPE, H, S).
     3.  Run a MACE single-point energy on the xTB-relaxed geometry.
     4.  Combine:
-            G_hybrid = E_MACE  +  (G_xTB − E_xTB)
+            G_hybrid = E_MACE  +  (G_xTB - E_xTB)
         i.e. replace the electronic energy with the better MACE value while
-        keeping the xTB thermal correction.  This is the "ΔΔG" or thermal-
+        keeping the xTB thermal correction.  This is the "DeltaDeltaG" or thermal-
         correction-transfer approach used in composite QM/MM-like workflows.
 
     Why not re-relax with MACE?
         MACE-MH-1 Hessians are noisier than xTB ones, so xTB gives more
         reliable thermal corrections.  The geometry change between xTB and
-        MACE minima is typically < 0.05 Å for Ni(II) complexes, well within
+        MACE minima is typically < 0.05 Angstrom for Ni(II) complexes, well within
         the uncertainty of the thermal correction.
 
     Returns
     -------
     ThermResult with:
-        .energy_eV    — MACE single-point energy at the xTB geometry
-        .gibbs_eV     — G_hybrid = E_MACE + (G_xTB − E_xTB)
-        .zpe_eV       — from xTB frequencies
-        .enthalpy_eV  — from xTB frequencies
-        .entropy_eV_K — from xTB frequencies
-        .backend      — "xtb+mace"
-        .model        — e.g. "GFN2-xTB + mh-1"
-        ._xtb_energy_eV   (extra attribute) — xTB electronic energy
-        ._mace_energy_eV  (extra attribute) — MACE single-point energy
-        ._thermal_correction_eV (extra attribute) — G_xTB − E_xTB
+        .energy_eV    -- MACE single-point energy at the xTB geometry
+        .gibbs_eV     -- G_hybrid = E_MACE + (G_xTB - E_xTB)
+        .zpe_eV       -- from xTB frequencies
+        .enthalpy_eV  -- from xTB frequencies
+        .entropy_eV_K -- from xTB frequencies
+        .backend      -- "xtb+mace"
+        .model        -- e.g. "GFN2-xTB + mh-1"
+        ._xtb_energy_eV   (extra attribute) -- xTB electronic energy
+        ._mace_energy_eV  (extra attribute) -- MACE single-point energy
+        ._thermal_correction_eV (extra attribute) -- G_xTB - E_xTB
 
     If compute_thermo=False, returns a RelaxResult with .energy_eV = E_MACE
     and no thermal data.

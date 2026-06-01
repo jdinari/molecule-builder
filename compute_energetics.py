@@ -28,7 +28,7 @@ def main():
     p.add_argument("--backend",      default="xtb",  choices=["xtb","mace","both"])
     p.add_argument("--model",        default=None,   help="Model override for selected backend")
     p.add_argument("--mace-device",  default="cpu")
-    p.add_argument("--thermo",       action="store_true", help="Run freq → ΔG")
+    p.add_argument("--thermo",       action="store_true", help="Run freq -> DeltaG")
     p.add_argument("--T",            type=float, default=298.15)
     p.add_argument("--P",            type=float, default=101325.0)
     p.add_argument("--fmax",         type=float, default=0.05)
@@ -43,14 +43,14 @@ def main():
     poscar_dir = Path(args.poscar_dir)
     output_dir = Path(args.output_dir) if args.output_dir else poscar_dir
 
-    # ── load structures ───────────────────────────────────────────────────────
+    # -- load structures -------------------------------------------------------
     rows, mols = _load_structures(poscar_dir, args.csv_in)
     if not mols:
         print(f"No structures found in {poscar_dir}. Check --poscar-dir.")
         sys.exit(1)
     print(f"Loaded {len(mols)} structures. Running {args.backend} energetics...")
 
-    # ── run ───────────────────────────────────────────────────────────────────
+    # -- run -------------------------------------------------------------------
     from molbuilder.energetics import run_energetics
 
     xtb_model  = args.model if args.backend in ("xtb",  "both") else None

@@ -7,7 +7,7 @@ All vectors are unit vectors pointing FROM the metal TO the donor atom.
 
 import numpy as np
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# -- helpers ------------------------------------------------------------------
 _s2 = 1 / np.sqrt(2)
 _s3 = 1 / np.sqrt(3)
 
@@ -15,7 +15,7 @@ def _norm(v):
     a = np.asarray(v, dtype=float)
     return a / np.linalg.norm(a)
 
-# ── Geometry definitions ─────────────────────────────────────────────────────
+# -- Geometry definitions -----------------------------------------------------
 # Each key maps to a list of unit vectors (one per coordination site).
 # The 'aliases' dict maps alternative names to canonical names.
 
@@ -27,7 +27,7 @@ GEOMETRIES = {
     ],
     "bent": [
         _norm([1., 0., 0.]),
-        _norm([-0.5, 0.866, 0.]),      # ~120° H₂O-like
+        _norm([-0.5, 0.866, 0.]),      # ~120deg H2O-like
     ],
 
     # CN 3

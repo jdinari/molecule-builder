@@ -1,7 +1,7 @@
 """
 tests/test_relaxation.py
 ========================
-Tests for the relaxation module (xTB backend only — MACE requires a model
+Tests for the relaxation module (xTB backend only -- MACE requires a model
 download that is not available in CI).
 
 All geometry tests use fmax=0.1 and steps=50 to keep runtime short.
@@ -18,29 +18,29 @@ from molbuilder.relaxation import (
 )
 
 
-# ── fixtures ──────────────────────────────────────────────────────────────────
+# -- fixtures ------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
 def ni_h2o4():
-    """Ni(H2O)4 sqp — small, fast to relax."""
+    """Ni(H2O)4 sqp -- small, fast to relax."""
     mol = build_isomers("Ni", ox=2, ligands=["H2O"] * 4, geometry="sqp")[0]
     return mol
 
 
 @pytest.fixture(scope="module")
 def ni_oh4():
-    """Ni(OH)4 sqp — closed-shell analogue."""
+    """Ni(OH)4 sqp -- closed-shell analogue."""
     mol = build_isomers("Ni", ox=2, ligands=["OH"] * 4, geometry="sqp")[0]
     return mol
 
 
 @pytest.fixture(scope="module")
 def ni2_oh2():
-    """Ni2(μ-OH)2(H2O)2 dimer."""
+    """Ni2(mu-OH)2(H2O)2 dimer."""
     return dimer("Ni", ox=2, terminal=["H2O"], bridge="mu-OH", n=2)
 
 
-# ── ASE conversion ────────────────────────────────────────────────────────────
+# -- ASE conversion ------------------------------------------------------------
 
 class TestAseConversion:
     def test_mol_to_ase_symbols(self, ni_h2o4):
@@ -70,7 +70,7 @@ class TestAseConversion:
         assert np.allclose(mol2.get_positions(), ni_h2o4.get_positions(), atol=1e-5)
 
 
-# ── RelaxResult and ThermResult dataclasses ───────────────────────────────────
+# -- RelaxResult and ThermResult dataclasses -----------------------------------
 
 class TestResultDataclasses:
     def test_relax_result_repr(self, ni_h2o4):
@@ -96,7 +96,7 @@ class TestResultDataclasses:
         assert isinstance(res, RelaxResult)
 
 
-# ── compute_energy ────────────────────────────────────────────────────────────
+# -- compute_energy ------------------------------------------------------------
 
 class TestComputeEnergy:
     def test_returns_relax_result(self, ni_h2o4):
@@ -146,7 +146,7 @@ class TestComputeEnergy:
         assert type(res.steps) is int
 
 
-# ── relax ─────────────────────────────────────────────────────────────────────
+# -- relax ---------------------------------------------------------------------
 
 class TestRelax:
     def test_returns_relax_result(self, ni_h2o4):
@@ -154,7 +154,7 @@ class TestRelax:
         assert isinstance(res, RelaxResult)
 
     def test_energy_lower_than_singlepoint(self, ni_h2o4):
-        """Relaxed energy should be ≤ single-point energy."""
+        """Relaxed energy should be <= single-point energy."""
         sp  = compute_energy(ni_h2o4, backend="xtb")
         opt = relax(ni_h2o4, backend="xtb", fmax=0.1, steps=80)
         assert opt.energy_eV <= sp.energy_eV + 0.01   # small tolerance for noise
@@ -184,7 +184,7 @@ class TestRelax:
         assert 0 < res.steps <= 30
 
 
-# ── compute_gibbs (freq + thermo, no geometry change) ─────────────────────────
+# -- compute_gibbs (freq + thermo, no geometry change) -------------------------
 
 class TestComputeGibbs:
     @pytest.fixture(scope="class")
@@ -230,7 +230,7 @@ class TestComputeGibbs:
         assert g_350 < therm.gibbs_eV
 
     def test_gibbs_at_lower_P_lower(self, therm):
-        """Lower pressure → more translational entropy → lower G."""
+        """Lower pressure -> more translational entropy -> lower G."""
         g_low_P = therm.gibbs_at(T=298.15, P=10132.5)   # 0.1 atm
         assert g_low_P < therm.gibbs_eV
 
@@ -246,7 +246,7 @@ class TestComputeGibbs:
         assert isinstance(g, float)
 
 
-# ── thermochemistry (relax + freq) ────────────────────────────────────────────
+# -- thermochemistry (relax + freq) --------------------------------------------
 
 class TestThermochemistry:
     @pytest.fixture(scope="class")
@@ -275,7 +275,7 @@ class TestThermochemistry:
         assert therm.gibbs_eV     < therm.enthalpy_eV
 
     def test_delta_E_example(self, ni_h2o4, ni_oh4):
-        """Smoke test: ΔE between two species is a finite float."""
+        """Smoke test: DeltaE between two species is a finite float."""
         e1 = compute_energy(ni_h2o4, backend="xtb")
         e2 = compute_energy(ni_oh4,  backend="xtb")
         dE = e2.energy_eV - e1.energy_eV
@@ -283,7 +283,7 @@ class TestThermochemistry:
         assert np.isfinite(dE)
 
     def test_delta_G_example(self, ni_h2o4, ni_oh4):
-        """Smoke test: ΔG between two species is a finite float."""
+        """Smoke test: DeltaG between two species is a finite float."""
         g1 = compute_gibbs(ni_h2o4, backend="xtb", T=298.15)
         g2 = compute_gibbs(ni_oh4,  backend="xtb", T=298.15)
         dG = g2.gibbs_eV - g1.gibbs_eV
@@ -291,7 +291,7 @@ class TestThermochemistry:
         assert np.isfinite(dG)
 
 
-# ── write_all integration ─────────────────────────────────────────────────────
+# -- write_all integration -----------------------------------------------------
 
 class TestWriteAllRelax:
     def test_relax_columns_in_row(self, tmp_path, ni_h2o4):

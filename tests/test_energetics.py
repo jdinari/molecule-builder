@@ -1,7 +1,7 @@
 """
 tests/test_energetics.py
 ========================
-Tests for molbuilder.energetics — the bond-status pipeline and run_energetics().
+Tests for molbuilder.energetics -- the bond-status pipeline and run_energetics().
 """
 
 import json
@@ -17,7 +17,7 @@ from molbuilder.energetics import (
 from molbuilder.relaxation import check_bonds_intact
 
 
-# ── fixtures ──────────────────────────────────────────────────────────────────
+# -- fixtures ------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
 def ni_h2o4():
@@ -41,7 +41,7 @@ def base_row(ni_h2o4):
     }
 
 
-# ── BondStatus constants ──────────────────────────────────────────────────────
+# -- BondStatus constants ------------------------------------------------------
 
 class TestBondStatus:
     def test_constants(self):
@@ -74,7 +74,7 @@ class TestBondStatus:
         assert _bond_status(_BROKEN_THRESHOLD + 1e-9)   == BondStatus.BROKEN
 
 
-# ── check_bonds_intact ────────────────────────────────────────────────────────
+# -- check_bonds_intact --------------------------------------------------------
 
 class TestCheckBondsIntact:
     def test_intact_structure(self, ni_h2o4):
@@ -85,7 +85,7 @@ class TestCheckBondsIntact:
         assert bc["broken_bonds"] == []
 
     def test_detects_broken_bond(self, ni_h2o4):
-        """Moving an O 5 Å away should be flagged as broken."""
+        """Moving an O 5 Angstrom away should be flagged as broken."""
         mol2 = Molecule.from_json(ni_h2o4.to_json())
         for a in mol2.atoms:
             if a.symbol == "O":
@@ -127,7 +127,7 @@ class TestCheckBondsIntact:
         assert bc["intact"] is True
 
 
-# ── molecule_name ─────────────────────────────────────────────────────────────
+# -- molecule_name -------------------------------------------------------------
 
 class TestMoleculeName:
     def test_basic(self):
@@ -156,7 +156,7 @@ class TestMoleculeName:
         assert isinstance(n, str)
 
 
-# ── constrain_bonds default ───────────────────────────────────────────────────
+# -- constrain_bonds default ---------------------------------------------------
 
 class TestConstrainBondsDefault:
     """constrain_bonds=False must be the default on all public functions."""
@@ -180,7 +180,7 @@ class TestConstrainBondsDefault:
         assert sig.parameters["constrain_bonds"].default is False
 
 
-# ── run_energetics ────────────────────────────────────────────────────────────
+# -- run_energetics ------------------------------------------------------------
 
 class TestRunEnergetics:
     @pytest.fixture(scope="class")
@@ -247,7 +247,7 @@ class TestRunEnergetics:
         assert updated[0]["relax_energy_eV"] is None
 
     def test_broken_bond_flagged(self, ni_h2o4, base_row):
-        """Artificially broken molecule — bond should show strain or xTB may fail."""
+        """Artificially broken molecule -- bond should show strain or xTB may fail."""
         mol_broken = Molecule.from_json(ni_h2o4.to_json())
         for a in mol_broken.atoms:
             if a.symbol == "O":
@@ -260,7 +260,7 @@ class TestRunEnergetics:
         r = updated[0]
         # xTB may fail to converge on a severely broken structure (SCF non-convergence)
         # in which case bond_status is set to "ERROR". Both BROKEN/STRETCHED and ERROR
-        # are acceptable outcomes — what we're testing is that the pipeline
+        # are acceptable outcomes -- what we're testing is that the pipeline
         # doesn't silently report OK for a clearly broken structure.
         assert r["bond_status"] in (BondStatus.STRETCHED, BondStatus.BROKEN, "ERROR"), \
             f"Expected STRETCHED/BROKEN/ERROR for broken structure, got {r['bond_status']}"
@@ -309,7 +309,7 @@ class TestRunEnergetics:
         assert isinstance(data.get("converged"), (bool, type(None)))
 
 
-# ── Excel writer ──────────────────────────────────────────────────────────────
+# -- Excel writer --------------------------------------------------------------
 
 class TestWriteEnergeticsExcel:
     def _sample_rows(self):

@@ -15,7 +15,7 @@ import numpy as np
 @dataclass
 class Atom:
     symbol:   str
-    position: np.ndarray   # Cartesian coordinates, Å
+    position: np.ndarray   # Cartesian coordinates, Angstrom
     label:    str = ""     # e.g. "Fe1", "Cl1"
     charge:   float = 0.0
 
@@ -53,7 +53,7 @@ class Molecule:
     metal_ox:          int         = 0
     ligand_names:      List[str]   = field(default_factory=list)
 
-    # ── accessors ────────────────────────────────────────────────────────────
+    # -- accessors ------------------------------------------------------------
 
     def get_symbols(self) -> List[str]:
         return [a.symbol for a in self.atoms]
@@ -77,7 +77,7 @@ class Molecule:
         """Move centroid to origin."""
         self.translate(-self.center_of_mass())
 
-    # ── serialization ─────────────────────────────────────────────────────────
+    # -- serialization ---------------------------------------------------------
 
     def to_dict(self) -> dict:
         """

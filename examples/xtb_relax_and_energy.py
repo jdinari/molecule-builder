@@ -1,5 +1,5 @@
 """
-xtb_relax_and_energy.py — relax a complex with xTB and compute ΔE
+xtb_relax_and_energy.py -- relax a complex with xTB and compute DeltaE
 
 Install:  pip install tblite ase
 """
@@ -22,4 +22,4 @@ for mol in mols:
 if len(energies) == 2:
     labels = list(energies)
     dE = energies[labels[1]] - energies[labels[0]]
-    print(f"\nΔE({labels[1]} − {labels[0]}) = {dE:+.4f} eV")
+    print(f"\nDeltaE({labels[1]} - {labels[0]}) = {dE:+.4f} eV")

@@ -1,11 +1,11 @@
 """
-Tutorial 04 — MACE energetics on a cluster (no internet, local model file)
+Tutorial 04 -- MACE energetics on a cluster (no internet, local model file)
 ===========================================================================
 
 This tutorial shows the full cluster workflow:
   1. Generate a set of Ni complexes
   2. Relax all of them with a local MACE model on GPU
-  3. Compare ΔE relative to the hexaaqua reference
+  3. Compare DeltaE relative to the hexaaqua reference
   4. Save results to CSV
 
 Typical cluster submission (SLURM):
@@ -29,11 +29,11 @@ from molbuilder.api import build
 from molbuilder.relaxation import relax
 import csv
 
-# ── Configuration — set these before running on your cluster ──────────────────
+# -- Configuration -- set these before running on your cluster ------------------
 
-MACE_MODEL  = None          # ← REQUIRED for offline clusters
+MACE_MODEL  = None          # <- REQUIRED for offline clusters
                             #   e.g. "/scratch/yourname/models/mace-mh-1.model"
-MACE_DEVICE = "cpu"         # ← change to "cuda" on a GPU node
+MACE_DEVICE = "cpu"         # <- change to "cuda" on a GPU node
 
 OUT_DIR  = Path("poscar_tutorial04")
 CSV_FILE = Path("tutorial04_energetics.csv")
@@ -41,7 +41,7 @@ CSV_FILE = Path("tutorial04_energetics.csv")
 OUT_DIR.mkdir(exist_ok=True)
 
 
-# ── Structures to compute ─────────────────────────────────────────────────────
+# -- Structures to compute -----------------------------------------------------
 
 STRUCTURES = {
     "Ni_H2O6":        ("Ni", 2, ["H2O"] * 6),
@@ -51,7 +51,7 @@ STRUCTURES = {
 }
 
 
-# ── Build + relax ─────────────────────────────────────────────────────────────
+# -- Build + relax -------------------------------------------------------------
 
 results = {}
 
@@ -80,14 +80,14 @@ for name, (metal, ox, ligands) in STRUCTURES.items():
             results[key] = None
 
 
-# ── Reference: hexaaqua ───────────────────────────────────────────────────────
+# -- Reference: hexaaqua -------------------------------------------------------
 
 ref_key = "Ni_H2O6"
 ref_result = results.get(ref_key)
 ref_E = ref_result.energy_eV if ref_result else None
 
 
-# ── Write CSV ─────────────────────────────────────────────────────────────────
+# -- Write CSV -----------------------------------------------------------------
 
 with open(CSV_FILE, "w", newline="") as f:
     writer = csv.writer(f)
@@ -105,11 +105,11 @@ with open(CSV_FILE, "w", newline="") as f:
 print(f"\nResults written to {CSV_FILE}")
 
 
-# ── Quick summary ─────────────────────────────────────────────────────────────
+# -- Quick summary -------------------------------------------------------------
 
 if ref_E is not None:
-    print(f"\nΔE relative to {ref_key} ({ref_E:.4f} eV):")
+    print(f"\nDeltaE relative to {ref_key} ({ref_E:.4f} eV):")
     for key, res in results.items():
         if res is not None and key != ref_key:
             dE = res.energy_eV - ref_E
-            print(f"  {key:35s}  ΔE = {dE:+.4f} eV")
+            print(f"  {key:35s}  DeltaE = {dE:+.4f} eV")

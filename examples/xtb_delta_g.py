@@ -1,7 +1,7 @@
 """
-xtb_delta_g.py — compute ΔG for a ligand substitution reaction with xTB
+xtb_delta_g.py -- compute DeltaG for a ligand substitution reaction with xTB
 
-Reaction:  [Ni(H2O)6] + HCOO⁻  →  [Ni(HCOO)(H2O)5] + H2O
+Reaction:  [Ni(H2O)6] + HCOO-  ->  [Ni(HCOO)(H2O)5] + H2O
 
 Install:  pip install tblite ase
 """
@@ -13,7 +13,7 @@ from molbuilder.relaxation import thermochemistry
 T = 298.15   # K
 P = 101325   # Pa
 
-# ── Free-molecule references ──────────────────────────────────────────────────
+# -- Free-molecule references --------------------------------------------------
 
 def make_h2o():
     ah = np.radians(104.5 / 2);  oh = 0.958
@@ -34,7 +34,7 @@ def make_formate():
         formula="HCOO", charge=-1, spin_multiplicity=1, metal_symbol="", metal_ox=0,
     )
 
-# ── Build species ─────────────────────────────────────────────────────────────
+# -- Build species -------------------------------------------------------------
 
 reactant1 = build("Ni", ox=2, ligands=["H2O"]*6)
 reactant2 = make_formate()
@@ -42,7 +42,7 @@ product1  = build("Ni", ox=2, ligands=["HCOO"]+["H2O"]*5)
 if isinstance(product1, list): product1 = product1[0]
 product2  = make_h2o()
 
-# ── Thermochemistry ───────────────────────────────────────────────────────────
+# -- Thermochemistry -----------------------------------------------------------
 
 species = {"Ni_H2O6": reactant1, "HCOO": reactant2,
            "Ni_HCOO_H2O5": product1, "H2O": product2}
@@ -53,7 +53,7 @@ for name, mol in species.items():
     results[name] = thermochemistry(mol, backend="xtb", T=T, P=P, fmax=0.05)
     print(f"    G={results[name].gibbs_eV:.4f} eV")
 
-# ── ΔE and ΔG ─────────────────────────────────────────────────────────────────
+# -- DeltaE and DeltaG -----------------------------------------------------------------
 
 r = results
 dE = r["Ni_HCOO_H2O5"].energy_eV + r["H2O"].energy_eV \
@@ -61,7 +61,7 @@ dE = r["Ni_HCOO_H2O5"].energy_eV + r["H2O"].energy_eV \
 dG = r["Ni_HCOO_H2O5"].gibbs_eV  + r["H2O"].gibbs_eV  \
    - r["Ni_H2O6"].gibbs_eV       - r["HCOO"].gibbs_eV
 
-print(f"\n[Ni(H2O)6] + HCOO⁻  →  [Ni(HCOO)(H2O)5] + H2O")
-print(f"  ΔE = {dE:+.4f} eV  ({dE*23.06:+.2f} kcal/mol)")
-print(f"  ΔG = {dG:+.4f} eV  ({dG*23.06:+.2f} kcal/mol)  at {T} K, {P/100:.0f} hPa")
-print(f"  ΔG(350K) = {r['Ni_HCOO_H2O5'].gibbs_at(350)+r['H2O'].gibbs_at(350)-r['Ni_H2O6'].gibbs_at(350)-r['HCOO'].gibbs_at(350):+.4f} eV")
+print(f"\n[Ni(H2O)6] + HCOO-  ->  [Ni(HCOO)(H2O)5] + H2O")
+print(f"  DeltaE = {dE:+.4f} eV  ({dE*23.06:+.2f} kcal/mol)")
+print(f"  DeltaG = {dG:+.4f} eV  ({dG*23.06:+.2f} kcal/mol)  at {T} K, {P/100:.0f} hPa")
+print(f"  DeltaG(350K) = {r['Ni_HCOO_H2O5'].gibbs_at(350)+r['H2O'].gibbs_at(350)-r['Ni_H2O6'].gibbs_at(350)-r['HCOO'].gibbs_at(350):+.4f} eV")

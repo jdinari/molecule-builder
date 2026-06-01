@@ -16,7 +16,7 @@ Currently implemented geometries:
   - tet  (Td)         : 4 sites, all equivalent (no trans pairs)
   - tbp  (D3h)        : 5 sites, axial pair + 3 equatorial
   - sqpy (C4v)        : 5 sites, axial + 4 equatorial pairs
-  - lin  (D∞h)        : 2 sites, 1 trans pair
+  - lin  (Dinfh)        : 2 sites, 1 trans pair
   - tp   (D3h)        : 3 sites, all equivalent
   - bent (C2v)        : 2 sites, equivalent
   - tpr  (D3h)        : 6 sites, two trigonal faces
@@ -30,12 +30,12 @@ from collections import Counter
 from typing import List, Dict
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Symmetry canonical-form functions per geometry
 # Each function takes a dict {site_index: ligand_label} and returns a
 # hashable canonical form.  Two assignments that are symmetry-equivalent
 # produce the same canonical form.
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 
 def _canon_oct(assign: Dict[int, str]) -> tuple:
     """Oh symmetry canonical form for 6-site octahedron.
@@ -84,7 +84,7 @@ def _canon_sqpy(assign: Dict[int, str]) -> tuple:
 
 
 def _canon_lin(assign: Dict[int, str]) -> tuple:
-    """D∞h linear: sites 0,1 are trans-equivalent."""
+    """Dinfh linear: sites 0,1 are trans-equivalent."""
     return (tuple(sorted([assign[0], assign[1]])),)
 
 
@@ -154,9 +154,9 @@ _CANON_FUNCS = {
 }
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Isomer names
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 
 # Trans pairs per geometry (used for labelling)
 _TRANS_PAIRS = {
@@ -189,7 +189,7 @@ def _label_isomer(site_assign: List[str], geometry: str, isomer_idx: int,
     counts = Counter(site_assign)
     n_types = len(counts)
 
-    # Special case: MA3B3 octahedral → fac / mer
+    # Special case: MA3B3 octahedral -> fac / mer
     if geometry == "oct" and n_types == 2:
         vals = list(counts.values())
         if sorted(vals) == [3, 3]:
@@ -200,13 +200,13 @@ def _label_isomer(site_assign: List[str], geometry: str, isomer_idx: int,
                             for a in range(len(sites))
                             for b in range(a + 1, len(sites)))
             return "mer" if has_trans else "fac"
-        # MA4B2 or MA2B4 → cis / trans
+        # MA4B2 or MA2B4 -> cis / trans
         if sorted(vals) == [2, 4]:
             minority = min(counts, key=lambda k: counts[k])
             sites = [i for i, s in enumerate(site_assign) if s == minority]
             return "trans" if _is_trans(sites[0], sites[1], geometry) else "cis"
 
-    # Square planar MA2B2 → cis / trans
+    # Square planar MA2B2 -> cis / trans
     if geometry == "sqp" and n_types == 2:
         vals = list(counts.values())
         if sorted(vals) == [2, 2]:
@@ -218,18 +218,18 @@ def _label_isomer(site_assign: List[str], geometry: str, isomer_idx: int,
     return f"isomer-{isomer_idx + 1}"
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Main enumeration function
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 
 def enumerate_isomers(ligand_labels: List[str], geometry: str) -> List[dict]:
     """
     Return a list of dicts, one per symmetry-distinct isomer.
 
     Each dict:
-        site_assignment : list[str]  – ligand name at each site index
-        label           : str        – human-readable name (fac/mer/cis/trans/…)
-        index           : int        – 0-based isomer index
+        site_assignment : list[str]  - ligand name at each site index
+        label           : str        - human-readable name (fac/mer/cis/trans/...)
+        index           : int        - 0-based isomer index
     """
     canon_func = _CANON_FUNCS.get(geometry)
     if canon_func is None:

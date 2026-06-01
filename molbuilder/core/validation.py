@@ -6,13 +6,13 @@ Geometry validation for molbuilder Molecule objects.
 Performs four independent checks, each returning a list of
 ValidationIssue objects:
 
-  1. overlap_check       – atom pairs closer than element-pair minimums
-  2. coordination_check  – every metal has the expected number of
+  1. overlap_check       - atom pairs closer than element-pair minimums
+  2. coordination_check  - every metal has the expected number of
                            close-contact donor atoms; no donor is
                            suspiciously far from its metal
-  3. connectivity_check  – the molecular graph is fully connected
+  3. connectivity_check  - the molecular graph is fully connected
                            (no detached fragments)
-  4. geometry_check      – (optional) metal coordination angles
+  4. geometry_check      - (optional) metal coordination angles
                            deviate excessively from ideal values
 
 Public API
@@ -37,14 +37,14 @@ from molbuilder.core.bond_lengths import COVALENT_RADII
 # TODO: also import get_bond_length when M-L distance sanity check is added
 from molbuilder.core.molecule import Molecule
 
-# ── constants ──────────────────────────────────────────────────────────────────
+# -- constants ------------------------------------------------------------------
 
-# Van der Waals radii (Å), used for non-bonded overlap thresholds.
+# Van der Waals radii (Angstrom), used for non-bonded overlap thresholds.
 # Source: Bondi 1964 + Alvarez 2013 for metals.
 _VDW = {
     "H":  1.20, "C":  1.70, "N":  1.55, "O":  1.52, "F":  1.47,
     "P":  1.80, "S":  1.80, "Cl": 1.75, "Br": 1.85, "I":  1.98,
-    # Transition metals — use Alvarez 2013 values
+    # Transition metals -- use Alvarez 2013 values
     "Ni": 1.63, "Fe": 1.52, "Co": 1.52, "Cu": 1.40, "Zn": 1.39,
     "Mn": 1.45, "Cr": 1.41, "V":  1.53, "Ti": 1.60, "Sc": 1.70,
     "Pd": 1.63, "Pt": 1.72, "Ru": 1.46, "Rh": 1.42, "Ir": 1.41,
@@ -55,10 +55,10 @@ _VDW = {
 def _vdw(sym: str) -> float:
     return _VDW.get(sym, 1.70)
 
-# Intra-ligand bond length ranges (Å) — used to identify genuine bonds.
-# Pairs not listed fall back to sum-of-covalent-radii × tolerance.
+# Intra-ligand bond length ranges (Angstrom) -- used to identify genuine bonds.
+# Pairs not listed fall back to sum-of-covalent-radii x tolerance.
 _BOND_RANGE: dict[tuple, tuple] = {
-    # (sym_a, sym_b): (min_Å, max_Å)
+    # (sym_a, sym_b): (min_Angstrom, max_Angstrom)
     ("H", "H"):  (0.60, 0.80),
     ("H", "C"):  (0.90, 1.15),
     ("H", "N"):  (0.85, 1.10),
@@ -85,20 +85,20 @@ def _is_ligand_bond(s1: str, s2: str, d: float) -> bool:
     if key in _BOND_RANGE:
         lo, hi = _BOND_RANGE[key]
         return lo <= d <= hi
-    # Fallback: covalent radii sum ± 25 %
+    # Fallback: covalent radii sum +/- 25 %
     r_sum = COVALENT_RADII.get(s1, 0.75) + COVALENT_RADII.get(s2, 0.75)
     return d <= r_sum * 1.25
 
 def _min_nonbonded_error(s1: str, s2: str) -> float:
-    """Hard error threshold: distance below this is physically impossible (0.65 × vdW sum)."""
+    """Hard error threshold: distance below this is physically impossible (0.65 x vdW sum)."""
     return (_vdw(s1) + _vdw(s2)) * 0.65
 
 def _min_nonbonded_warn(s1: str, s2: str) -> float:
-    """Warning threshold: tight pre-DFT contact that will likely relax (0.76 × vdW sum)."""
+    """Warning threshold: tight pre-DFT contact that will likely relax (0.76 x vdW sum)."""
     return (_vdw(s1) + _vdw(s2)) * 0.76
 
 
-# ── data types ─────────────────────────────────────────────────────────────────
+# -- data types -----------------------------------------------------------------
 
 @dataclass(frozen=True)
 class ValidationIssue:
@@ -115,7 +115,7 @@ class ValidationIssue:
         if self.atom_i >= 0 and self.atom_j >= 0:
             parts.append(f"  atoms {self.atom_i+1} & {self.atom_j+1}")
         if not math.isnan(self.distance):
-            parts.append(f"  d = {self.distance:.3f} Å")
+            parts.append(f"  d = {self.distance:.3f} Angstrom")
         return "\n".join(parts)
 
 
@@ -124,7 +124,7 @@ class ValidationResult:
     """Aggregated result of all checks run against one Molecule."""
     issues: List[ValidationIssue] = field(default_factory=list)
 
-    # ── derived properties ────────────────────────────────────────────────────
+    # -- derived properties ----------------------------------------------------
     @property
     def passed(self) -> bool:
         """True only if no *error*-severity issues were found."""
@@ -141,9 +141,9 @@ class ValidationResult:
     @property
     def summary(self) -> str:
         if not self.issues:
-            return "✓ Structure passed all validation checks."
+            return "OK Structure passed all validation checks."
         lines = [
-            f"{'✓' if self.passed else '✗'} "
+            f"{'OK' if self.passed else 'FAIL'} "
             f"{len(self.errors)} error(s), {len(self.warnings)} warning(s):"
         ]
         for iss in self.issues:
@@ -154,7 +154,7 @@ class ValidationResult:
         return self.passed
 
 
-# ── helpers ────────────────────────────────────────────────────────────────────
+# -- helpers --------------------------------------------------------------------
 
 def _metal_symbols(mol: Molecule) -> Set[str]:
     """All distinct metal element symbols in the molecule.
@@ -162,7 +162,7 @@ def _metal_symbols(mol: Molecule) -> Set[str]:
     Uses mol.metal_symbol as the primary source, then cross-checks
     mol.metal_indices to pick up any additional metals.  Excludes common
     ligand atoms (H, C, N, O, F, P, S, Cl, Br, I) regardless of what
-    metal_indices points to — this guards against stale index bookkeeping.
+    metal_indices points to -- this guards against stale index bookkeeping.
     """
     _LIGAND_ATOMS = {"H", "C", "N", "O", "F", "P", "S", "Cl", "Br", "I"}
     syms: Set[str] = set()
@@ -193,12 +193,12 @@ def _distance_matrix(mol: Molecule) -> np.ndarray:
     return d
 
 
-# ── check 1: overlap ──────────────────────────────────────────────────────────
+# -- check 1: overlap ----------------------------------------------------------
 
 def _intra_ligand_pairs(mol: Molecule, metals: Set[str]) -> Set[tuple]:
     """
     Return the set of (i,j) index pairs (i<j) that are part of the same
-    ligand fragment, defined as atoms connected through ≤4 bonds without
+    ligand fragment, defined as atoms connected through <=4 bonds without
     passing through a metal.  These are normal 1-2, 1-3, and 1-4
     interactions that always have short distances by construction.
     """
@@ -247,9 +247,9 @@ def overlap_check(mol: Molecule) -> List[ValidationIssue]:
     Flag atom pairs that are closer than the element-pair minimum
     non-bonded threshold AND are not a recognised covalent bond
     AND are not part of the same ligand fragment (intra-ligand 1-2
-    through 1-4 contacts are skipped — they are normal by construction).
+    through 1-4 contacts are skipped -- they are normal by construction).
 
-    Metal–ligand contacts are excluded (those are coordination bonds
+    Metal-ligand contacts are excluded (those are coordination bonds
     with their own check).
     """
     issues: List[ValidationIssue] = []
@@ -266,7 +266,7 @@ def overlap_check(mol: Molecule) -> List[ValidationIssue]:
             si, sj = atoms[i].symbol, atoms[j].symbol
             d = dm[i, j]
 
-            # Skip metal–anything (handled by coordination_check)
+            # Skip metal-anything (handled by coordination_check)
             if si in metals or sj in metals:
                 continue
 
@@ -285,9 +285,9 @@ def overlap_check(mol: Molecule) -> List[ValidationIssue]:
                     check="overlap",
                     severity="error",
                     reason=(
-                        f"{si}({i+1})–{sj}({j+1}): {d:.3f} Å "
-                        f"< hard minimum {err_threshold:.2f} Å "
-                        f"(impossible overlap, vdW sum × 0.65)"
+                        f"{si}({i+1})-{sj}({j+1}): {d:.3f} Angstrom "
+                        f"< hard minimum {err_threshold:.2f} Angstrom "
+                        f"(impossible overlap, vdW sum x 0.65)"
                     ),
                     atom_i=i, atom_j=j, distance=d,
                 ))
@@ -296,9 +296,9 @@ def overlap_check(mol: Molecule) -> List[ValidationIssue]:
                     check="overlap",
                     severity="warning",
                     reason=(
-                        f"{si}({i+1})–{sj}({j+1}): {d:.3f} Å "
-                        f"< soft minimum {warn_threshold:.2f} Å "
-                        f"(tight pre-DFT contact, vdW sum × 0.76)"
+                        f"{si}({i+1})-{sj}({j+1}): {d:.3f} Angstrom "
+                        f"< soft minimum {warn_threshold:.2f} Angstrom "
+                        f"(tight pre-DFT contact, vdW sum x 0.76)"
                     ),
                     atom_i=i, atom_j=j, distance=d,
                 ))
@@ -306,20 +306,20 @@ def overlap_check(mol: Molecule) -> List[ValidationIssue]:
     return issues
 
 
-# ── check 2: coordination ─────────────────────────────────────────────────────
+# -- check 2: coordination -----------------------------------------------------
 
-# Maximum M–L distance to count as coordinated (Å).
+# Maximum M-L distance to count as coordinated (Angstrom).
 # Any donor atom beyond this is considered detached.
-_MAX_COORD_DISTANCE = 3.20   # generous upper bound; real bonds < 2.8 Å
+_MAX_COORD_DISTANCE = 3.20   # generous upper bound; real bonds < 2.8 Angstrom
 
 def coordination_check(mol: Molecule) -> List[ValidationIssue]:
     """
     For each metal centre:
       - Check that every donor listed in metal_indices has at least
         one ligand atom within _MAX_COORD_DISTANCE.
-      - Check that no M–L distance is implausibly short (< 1.4 Å).
+      - Check that no M-L distance is implausibly short (< 1.4 Angstrom).
       - Warn if the coordination number differs from what is implied
-        by the molecule's declared geometry (±1 tolerance).
+        by the molecule's declared geometry (+/-1 tolerance).
     """
     issues: List[ValidationIssue] = []
     atoms  = mol.atoms
@@ -347,7 +347,7 @@ def coordination_check(mol: Molecule) -> List[ValidationIssue]:
         coordinated = [(j, sym, d) for j, sym, d in donor_dists
                        if d <= _MAX_COORD_DISTANCE]
 
-        # --- too-short M–L contact (genuine overlap with metal) ---
+        # --- too-short M-L contact (genuine overlap with metal) ---
         for j, sym, d in coordinated:
             r_sum = COVALENT_RADII.get(m_sym, 1.4) + COVALENT_RADII.get(sym, 0.7)
             min_ml = r_sum * 0.65   # 35 % compression is physically impossible
@@ -356,8 +356,8 @@ def coordination_check(mol: Molecule) -> List[ValidationIssue]:
                     check="coordination",
                     severity="error",
                     reason=(
-                        f"{m_sym}({mi+1})–{sym}({j+1}): {d:.3f} Å "
-                        f"impossibly short (min {min_ml:.2f} Å for this pair)"
+                        f"{m_sym}({mi+1})-{sym}({j+1}): {d:.3f} Angstrom "
+                        f"impossibly short (min {min_ml:.2f} Angstrom for this pair)"
                     ),
                     atom_i=mi, atom_j=j, distance=d,
                 ))
@@ -365,7 +365,7 @@ def coordination_check(mol: Molecule) -> List[ValidationIssue]:
         # --- CN vs declared geometry ---
         if mol.geometry and mol.geometry in _GEOM_CN:
             # Count only first-shell donors (closest atom per ligand fragment)
-            # Simple proxy: atoms within 2.8 Å
+            # Simple proxy: atoms within 2.8 Angstrom
             first_shell = [d for _, _, d in coordinated if d <= 2.80]
             expected_cn = _GEOM_CN[mol.geometry]
             actual_cn   = len(first_shell)
@@ -376,7 +376,7 @@ def coordination_check(mol: Molecule) -> List[ValidationIssue]:
                     reason=(
                         f"{m_sym}({mi+1}): declared geometry '{mol.geometry}' "
                         f"implies CN={expected_cn} but found {actual_cn} "
-                        f"donors within 2.80 Å"
+                        f"donors within 2.80 Angstrom"
                     ),
                     atom_i=mi,
                 ))
@@ -386,14 +386,14 @@ def coordination_check(mol: Molecule) -> List[ValidationIssue]:
             issues.append(ValidationIssue(
                 check="coordination",
                 severity="error",
-                reason=f"{m_sym}({mi+1}): no donor atoms within {_MAX_COORD_DISTANCE} Å — metal is bare",
+                reason=f"{m_sym}({mi+1}): no donor atoms within {_MAX_COORD_DISTANCE} Angstrom -- metal is bare",
                 atom_i=mi,
             ))
 
     return issues
 
 
-# ── check 3: connectivity ─────────────────────────────────────────────────────
+# -- check 3: connectivity -----------------------------------------------------
 
 def connectivity_check(mol: Molecule) -> List[ValidationIssue]:
     """
@@ -417,7 +417,7 @@ def connectivity_check(mol: Molecule) -> List[ValidationIssue]:
             si, sj = atoms[i].symbol, atoms[j].symbol
             d = dm[i, j]
             r_sum = COVALENT_RADII.get(si, 1.0) + COVALENT_RADII.get(sj, 1.0)
-            # Use 1.3× for ligand–ligand, 1.4× for metal-involved (dative bonds longer)
+            # Use 1.3x for ligand-ligand, 1.4x for metal-involved (dative bonds longer)
             factor = 1.40 if (si in metals or sj in metals) else 1.30
             if d <= r_sum * factor:
                 adj[i].add(j)
@@ -468,9 +468,9 @@ def connectivity_check(mol: Molecule) -> List[ValidationIssue]:
     return issues
 
 
-# ── check 4: geometry (optional) ──────────────────────────────────────────────
+# -- check 4: geometry (optional) ----------------------------------------------
 
-# Ideal L–M–L angles (°) for common geometries
+# Ideal L-M-L angles (deg) for common geometries
 _IDEAL_ANGLES: dict[str, List[float]] = {
     "lin":  [180.0],
     "tp":   [120.0],
@@ -486,10 +486,10 @@ _ANGLE_TOLERANCE = 25.0   # degrees; pre-optimisation structures can deviate a l
 
 def geometry_check(mol: Molecule) -> List[ValidationIssue]:
     """
-    For each metal centre, compute all L–M–L angles between the
+    For each metal centre, compute all L-M-L angles between the
     nearest donors and compare them to the ideal angles for the
     declared geometry.  Issues a warning (not error) when no
-    measured angle falls within ±_ANGLE_TOLERANCE of any ideal value.
+    measured angle falls within +/-_ANGLE_TOLERANCE of any ideal value.
     """
     issues: List[ValidationIssue] = []
     if not mol.geometry or mol.geometry not in _IDEAL_ANGLES:
@@ -504,7 +504,7 @@ def geometry_check(mol: Molecule) -> List[ValidationIssue]:
     for mi in mol.metal_indices:
         m_pos = atoms[mi].position
 
-        # First-shell donors: non-metal atoms within 3.0 Å
+        # First-shell donors: non-metal atoms within 3.0 Angstrom
         donors = [
             j for j in range(n)
             if j != mi
@@ -515,7 +515,7 @@ def geometry_check(mol: Molecule) -> List[ValidationIssue]:
         if len(donors) < 2:
             continue
 
-        # Compute all L–M–L angles
+        # Compute all L-M-L angles
         measured: List[float] = []
         for a, da in enumerate(donors):
             for b, db in enumerate(donors):
@@ -540,7 +540,7 @@ def geometry_check(mol: Molecule) -> List[ValidationIssue]:
         ]
 
         if len(badly_distorted) > len(measured) * 0.5:
-            # More than half the angles are far from ideal — flag it
+            # More than half the angles are far from ideal -- flag it
             worst = max(
                 badly_distorted,
                 key=lambda a: min(abs(a - ideal) for ideal in ideals),
@@ -550,9 +550,9 @@ def geometry_check(mol: Molecule) -> List[ValidationIssue]:
                 severity="warning",
                 reason=(
                     f"{atoms[mi].symbol}({mi+1}): "
-                    f"{len(badly_distorted)}/{len(measured)} L–M–L angles "
-                    f"deviate >± {_ANGLE_TOLERANCE}° from ideal {mol.geometry} angles "
-                    f"{ideals}. Worst: {worst:.1f}°"
+                    f"{len(badly_distorted)}/{len(measured)} L-M-L angles "
+                    f"deviate >+/- {_ANGLE_TOLERANCE}deg from ideal {mol.geometry} angles "
+                    f"{ideals}. Worst: {worst:.1f}deg"
                 ),
                 atom_i=mi,
             ))
@@ -560,7 +560,7 @@ def geometry_check(mol: Molecule) -> List[ValidationIssue]:
     return issues
 
 
-# ── public API ─────────────────────────────────────────────────────────────────
+# -- public API -----------------------------------------------------------------
 
 _ALL_CHECKS = ("overlap", "coordination", "connectivity", "geometry")
 
@@ -583,9 +583,9 @@ def validate(
     Returns
     -------
     ValidationResult
-        .passed  – True iff no error-severity issues found
-        .issues  – list of ValidationIssue
-        .summary – formatted string
+        .passed  - True iff no error-severity issues found
+        .issues  - list of ValidationIssue
+        .summary - formatted string
     """
     result = ValidationResult()
 
@@ -619,5 +619,5 @@ def validate(
 
 
 def is_valid(mol: Molecule, **kw) -> bool:
-    """Convenience wrapper — returns True iff validate() passes."""
+    """Convenience wrapper -- returns True iff validate() passes."""
     return validate(mol, **kw).passed

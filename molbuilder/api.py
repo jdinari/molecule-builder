@@ -6,8 +6,8 @@ Public API for molbuilder.
     from molbuilder.api import build, dimer, trimer, poscar, xyz, info
 
 build() always returns all symmetry-distinct isomers automatically:
-  - One isomer  → returns a single Molecule
-  - Two or more → returns a list of Molecule objects
+  - One isomer  -> returns a single Molecule
+  - Two or more -> returns a list of Molecule objects
 
 Custom POSCAR ligands are supported via load_ligand_from_poscar().
 Denticity modes use colon notation: "HCOO:bi", "bpy:mono", etc.
@@ -37,14 +37,14 @@ from molbuilder.output.poscar_writer import poscar_to_string
 from molbuilder.output.xyz_writer import xyz_to_string
 from molbuilder.core.validation import validate
 
-# ── re-exported symbols ──────────────────────────────────────────────────────
+# -- re-exported symbols ------------------------------------------------------
 # list_geometries and list_ligands are imported here so that external code
 # can do `from molbuilder.api import list_geometries` as a convenience.
 __all_reexports__ = [list_geometries, list_ligands]  # keeps linters happy
 
 
 
-# ── spin-state estimation ────────────────────────────────────────────────────
+# -- spin-state estimation ----------------------------------------------------
 
 _D_ELECTRONS: Dict[str, Dict[int, int]] = {
     "Sc": {3: 0},
@@ -78,7 +78,7 @@ def _spin_multiplicity(metal: str, ox: int) -> int:
     return _UNPAIRED.get(d, 1) + 1
 
 
-# ── SMILES donor-atom heuristic ──────────────────────────────────────────────
+# -- SMILES donor-atom heuristic ----------------------------------------------
 
 def _donor_from_smiles(smiles: str) -> str:
     for sym in ["P", "S", "N", "O", "C"]:
@@ -87,7 +87,7 @@ def _donor_from_smiles(smiles: str) -> str:
     return "C"
 
 
-# ── CustomLigand ─────────────────────────────────────────────────────────────
+# -- CustomLigand -------------------------------------------------------------
 
 class CustomLigand:
     """A ligand loaded from a POSCAR file."""
@@ -131,7 +131,7 @@ def load_ligand_from_poscar(poscar_path, donor_atom_indices: List[int],
     return CustomLigand(poscar_path, donor_atom_indices, charge, name)
 
 
-# ── ligand expansion ─────────────────────────────────────────────────────────
+# -- ligand expansion ---------------------------------------------------------
 
 def _expand_ligand(lig, metal: str, ox: int, geometry: str) -> dict:
     if isinstance(lig, CustomLigand):
@@ -197,7 +197,7 @@ def _expand_ligand(lig, metal: str, ox: int, geometry: str) -> dict:
     }
 
 
-# ── formula ───────────────────────────────────────────────────────────────────
+# -- formula -------------------------------------------------------------------
 
 def _make_formula(symbols: List[str]) -> str:
     cnt = Counter(symbols)
@@ -205,15 +205,15 @@ def _make_formula(symbols: List[str]) -> str:
                    for el, n in sorted(cnt.items()))
 
 
-# ── clash checker ─────────────────────────────────────────────────────────────
+# -- clash checker -------------------------------------------------------------
 
-# Minimum non-bonded distances — calibrated to allow normal bond lengths
+# Minimum non-bonded distances -- calibrated to allow normal bond lengths
 # while flagging genuine overlaps
 _NB_MIN = {
     ("H",  "H"):  1.20,
     ("H",  "C"):  1.60,
     ("H",  "N"):  1.60,
-    ("H",  "O"):  1.20,   # compact clusters can have H...O ~1.27 Å before relaxation
+    ("H",  "O"):  1.20,   # compact clusters can have H...O ~1.27 Angstrom before relaxation
     ("H",  "Cl"): 1.80,
     ("C",  "C"):  2.00,
     ("C",  "O"):  1.70,
@@ -253,18 +253,18 @@ def check_structure(mol: Molecule) -> List[str]:
         for j, b in enumerate(atoms):
             if j <= i:
                 continue
-            # Skip metal–anything contacts (coordination bonds)
+            # Skip metal-anything contacts (coordination bonds)
             if a.symbol in metals or b.symbol in metals:
                 continue
             d = np.linalg.norm(a.position - b.position)
             if _is_overlap(a.symbol, b.symbol, d):
                 warns.append(
-                    f"atom {i+1}({a.symbol}) – atom {j+1}({b.symbol}): {d:.3f} Å"
+                    f"atom {i+1}({a.symbol}) - atom {j+1}({b.symbol}): {d:.3f} Angstrom"
                 )
     return warns
 
 
-# ── core single-structure builder ─────────────────────────────────────────────
+# -- core single-structure builder ---------------------------------------------
 
 def _best_bidentate_perp(v_bisect: np.ndarray,
                          already_placed: List[np.ndarray],
@@ -277,7 +277,7 @@ def _best_bidentate_perp(v_bisect: np.ndarray,
         O1 = rot(perp,  +bite_half) @ v_bisect * bl
         O2 = rot(perp,  -bite_half) @ v_bisect * bl
 
-    We sweep *perp* through 360° in the plane perpendicular to v_bisect and
+    We sweep *perp* through 360deg in the plane perpendicular to v_bisect and
     return the direction that keeps O1 and O2 furthest from every position in
     *already_placed*.  If *already_placed* is empty we return an arbitrary perp.
     """
@@ -311,7 +311,7 @@ def _best_bidentate_perp(v_bisect: np.ndarray,
         if min_d > best_score:
             best_score = min_d
             best_angle = rad
-    # Fine sweep ±15° around coarse best
+    # Fine sweep +/-15deg around coarse best
     for deg in range(-15, 16, 1):
         rad = best_angle + np.radians(float(deg))
         v1, v2 = _donors(rad)
@@ -327,7 +327,7 @@ def _best_bidentate_perp(v_bisect: np.ndarray,
     return np.cos(best_angle) * p0 + np.sin(best_angle) * p1
 
 
-# ── core single-structure builder ─────────────────────────────────────────────
+# -- core single-structure builder ---------------------------------------------
 
 def _build_single(metal: str, ox: int, ligands: List, geometry: str,
                   spin: Optional[int],
@@ -350,7 +350,7 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
         v = np.array([np.sin(a), np.cos(a), 0.3])
         vecs.append(v / np.linalg.norm(v))
 
-    # ── Sort ligands: bidentate before monodentate ───────────────────────────
+    # -- Sort ligands: bidentate before monodentate ---------------------------
     # Placing bidentate chelates first ensures they claim the 'best' adjacent
     # vector pairs in geometries like TBP and OCT rather than being assigned
     # leftover (possibly axial-only) vectors that cause fan-plane clashes.
@@ -400,10 +400,10 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
             half = np.radians(bite / 2)
 
             # Choose fan-plane direction to maximise clearance from already-placed atoms.
-            # Future ligand positions (remaining geometry vectors) are scaled to 2.7 Å
-            # (larger than M-donor bl ≈ 2.0 Å) to account for H atoms that will extend
-            # ~0.96 Å beyond the donor, so the bidentate fans into a genuinely open quadrant.
-            _H_REACH = 2.7   # conservative: M-O bl + O-H bl ≈ 2.06 + 0.96
+            # Future ligand positions (remaining geometry vectors) are scaled to 2.7 Angstrom
+            # (larger than M-donor bl ~= 2.0 Angstrom) to account for H atoms that will extend
+            # ~0.96 Angstrom beyond the donor, so the bidentate fans into a genuinely open quadrant.
+            _H_REACH = 2.7   # conservative: M-O bl + O-H bl ~= 2.06 + 0.96
             already_dirs = (
                 [a.position - metal_pos for a in mol_atoms if a.symbol != metal]
                 + [vecs[(vec_idx + k) % len(vecs)] * _H_REACH
@@ -444,7 +444,7 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
     formula   = _make_formula([a.symbol for a in mol_atoms])
     spin_mult = spin if spin is not None else _spin_multiplicity(metal, ox)
 
-    # ── Post-placement H torsion re-optimisation ──────────────────────────────
+    # -- Post-placement H torsion re-optimisation ------------------------------
     # For each H-bearing ligand, rotate the H atoms around the M-donor axis to
     # maximise the minimum distance to all neighbouring heavy atoms.
     # This handles cases where the initial torsion produced by place_ligand() still
@@ -454,10 +454,10 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
     # IMPORTANT: only O/N donors directly bonded to the metal are rotated (H2O, OH,
     # NH3).  H atoms on C (formate, formic acid, CO) must NOT be independently rotated
     # because they are geometrically fixed relative to the C-O bond framework.
-    _TORSION_STEPS = 72   # 5° resolution
+    _TORSION_STEPS = 72   # 5deg resolution
     _MIN_H_D       = 1.77  # hard O-H minimum from validation
     _DONOR_ELEMENTS = {"O", "N", "S", "P"}   # elements that can be M-bonded H-bearers
-    _MAX_M_DONOR    = 2.8                     # Å: donor must be within this of metal
+    _MAX_M_DONOR    = 2.8                     # Angstrom: donor must be within this of metal
 
     # Build a map: for each H atom, which donor atom is its immediate neighbour?
     for idx, atom in enumerate(mol_atoms):
@@ -492,7 +492,7 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
         if not h_group or idx != h_group[0]:
             continue   # only process once per donor (when we hit the first H)
 
-        # Rotation axis: metal → donor
+        # Rotation axis: metal -> donor
         axis = donor_pos - metal_pos
         n    = np.linalg.norm(axis)
         if n < 1e-6:
@@ -517,7 +517,7 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
             for hi in h_group for ob in obstacles
         )
         if current_min_d >= _MIN_H_D:
-            continue   # H already clear of all obstacles — no rotation needed
+            continue   # H already clear of all obstacles -- no rotation needed
         best_min_d = -1.
         best_R     = np.eye(3)
         for step in range(_TORSION_STEPS):
@@ -554,7 +554,7 @@ def _build_single(metal: str, ox: int, ligands: List, geometry: str,
     )
 
 
-# ── public build() ────────────────────────────────────────────────────────────
+# -- public build() ------------------------------------------------------------
 
 def build(metal: str,
           ox: int,
@@ -565,12 +565,12 @@ def build(metal: str,
     Build a mononuclear transition-metal complex.
 
     Automatically generates all symmetry-distinct isomers:
-      - One isomer  → returns a single Molecule
-      - Two or more → returns a list of Molecule objects
+      - One isomer  -> returns a single Molecule
+      - Two or more -> returns a list of Molecule objects
 
-    Each molecule has a .label attribute ("fac", "mer", "cis", "trans", …).
+    Each molecule has a .label attribute ("fac", "mer", "cis", "trans", ...).
     Isomers only differ when chemically different ligands end up in different
-    spatial arrangements — swapping identical ligands never produces a new isomer.
+    spatial arrangements -- swapping identical ligands never produces a new isomer.
 
     Parameters
     ----------
@@ -656,7 +656,7 @@ def build_isomers(metal: str,
 
 
 
-# ── shared bridge-placement helpers ──────────────────────────────────────────
+# -- shared bridge-placement helpers ------------------------------------------
 
 def _perp_basis(mm_hat: np.ndarray):
     """Return two orthonormal vectors spanning the plane perpendicular to mm_hat."""
@@ -746,7 +746,7 @@ def _place_oh_bridge(m1_p: np.ndarray, m2_p: np.ndarray,
     """Return [(symbol, position), ...] for a mu-OH bridge.
 
     O is placed at the geometrically correct position equidistant from both
-    metals (displaced perpendicular to M-M by sqrt(bl²−(d_mm/2)²)).
+    metals (displaced perpendicular to M-M by sqrt(bl2-(d_mm/2)2)).
     H points outward along perp_dir.
     """
     perp_offset = np.sqrt(max(bl**2 - (d_mm / 2.0)**2, 0.0))
@@ -763,7 +763,7 @@ def _place_hcoo_bridge(m1_p: np.ndarray, m2_p: np.ndarray,
     """Return [(symbol, position), ...] for a mu-HCOO (syn-syn) bridge.
 
     Both O atoms are tilted toward perp_dir at the angle that gives the
-    target O-O distance (~2.2 Å).  C bridges above the O-O midpoint.
+    target O-O distance (~2.2 Angstrom).  C bridges above the O-O midpoint.
     """
     cos_t = (d_mm - target_oo) / (2.0 * bl)
     cos_t = max(min(cos_t, 0.99), -0.99)
@@ -797,7 +797,7 @@ def _append_bridge_atoms(atoms_list: List, pairs: List[tuple]):
                                label=f"{sym}{len(atoms_list)}"))
 
 
-# ── dimer() ───────────────────────────────────────────────────────────────────
+# -- dimer() -------------------------------------------------------------------
 
 def dimer(metal: str,
           ox: int,
@@ -823,7 +823,7 @@ def dimer(metal: str,
         Terminal ligands applied symmetrically to *both* metal centres.
         Ignored if terminal_m1 / terminal_m2 are supplied.
     terminal_m1, terminal_m2 : list, optional
-        Independent terminal ligand lists for metal 1 (−x) and metal 2 (+x).
+        Independent terminal ligand lists for metal 1 (-x) and metal 2 (+x).
         Use these to build heteroleptic dimers where the two centres differ,
         e.g. terminal_m1=["H2O"], terminal_m2=[] for Ni2(mu-HCOO)4(H2O) where
         only one Ni carries the water ligand.
@@ -842,7 +842,7 @@ def dimer(metal: str,
 
     geom_canon = resolve_geometry(geometry) if geometry else "oct"
 
-    # ── bond lengths ──────────────────────────────────────────────────────────
+    # -- bond lengths ----------------------------------------------------------
     if bridge:
         try:
             bl_data      = get_ligand(bridge.replace("mu-", ""))
@@ -855,27 +855,27 @@ def dimer(metal: str,
         bridge_donor = "O"
 
 
-    # ── M-M distance ──────────────────────────────────────────────────────────
+    # -- M-M distance ----------------------------------------------------------
     if mm_distance is not None:
         d_mm = mm_distance
     elif mm_bond:
         from molbuilder.core.bond_lengths import COVALENT_RADII
         d_mm = 2 * COVALENT_RADII.get(metal, 1.5) + 0.1
     else:
-        # Realistic M-X-M angle: ~105° for μ-OH, ~150° for μ-HCOO
-        # (syn-syn formate bridges in real crystal structures have Ni-Ni ~3.8 Å,
-        # corresponding to an effective M-O-M angle of ~150° when accounting
+        # Realistic M-X-M angle: ~105deg for mu-OH, ~150deg for mu-HCOO
+        # (syn-syn formate bridges in real crystal structures have Ni-Ni ~3.8 Angstrom,
+        # corresponding to an effective M-O-M angle of ~150deg when accounting
         # for the O-C-O bridging geometry)
         mxm_angle = 105.0 if "OH" in (bridge or "") else 150.0
         d_mm = 2.0 * bridge_bl * np.sin(np.radians(mxm_angle / 2))
         d_mm = max(d_mm, 2 * bridge_bl * 0.5)
 
-    # ── metal positions ───────────────────────────────────────────────────────
+    # -- metal positions -------------------------------------------------------
     m1_pos = np.array([-d_mm / 2, 0., 0.])
     m2_pos = np.array([ d_mm / 2, 0., 0.])
 
-    # ── coordinate system ─────────────────────────────────────────────────────
-    # +x  = M1 → M2 (bridging axis)
+    # -- coordinate system -----------------------------------------------------
+    # +x  = M1 -> M2 (bridging axis)
     # +y,+z = equatorial / axial directions
 
     # CN inference uses the larger of the two terminal sets so geometry vectors
@@ -892,20 +892,20 @@ def dimer(metal: str,
     # Since bridges are placed first (their positions come from clearance sweep,
     # not the geometry vectors), we give add_terminal ALL geometry vectors and let
     # the clearance sweep pick the best ones.  We always use octahedral vectors (6
-    # directions) for the candidate pool — lower-CN geometries like sqpy only have
+    # directions) for the candidate pool -- lower-CN geometries like sqpy only have
     # 5 vectors which can leave terminals with no clean site when bridges occupy 2.
     _oct_vecs = get_geometry_vectors("oct")
     terminal_vecs_m1 = list(_oct_vecs)
     terminal_vecs_m2 = [np.array([-v[0], v[1], v[2]]) for v in _oct_vecs]
 
-    # ── build atom list ───────────────────────────────────────────────────────
+    # -- build atom list -------------------------------------------------------
     all_atoms:    List[Atom] = []
     total_charge: int = 0
 
     def add_metal(pos, label):
         all_atoms.append(Atom(symbol=metal, position=pos.copy(), label=label))
 
-    # ── Build order: metals → bridges → terminals ────────────────────────────
+    # -- Build order: metals -> bridges -> terminals ----------------------------
     # Bridges are placed first because their positions are determined purely by
     # M-M geometry (not by terminal positions). Terminals then use the clearance
     # sweep to find the remaining open sites, naturally avoiding bridge atoms.
@@ -968,7 +968,7 @@ def dimer(metal: str,
                     if not _clashes(candidate):
                         placed_ok = candidate; used_vec_idx = vi; break
                 if placed_ok is None:
-                    # All vectors clash — use the least-bad (already sorted best-first)
+                    # All vectors clash -- use the least-bad (already sorted best-first)
                     v         = vec_pool[0]; used_vec_idx = 0
                     donor_abs = metal_pos + v * bl
                     adj       = [metal_pos + vec_pool[jj] * bl
@@ -1055,7 +1055,7 @@ def dimer(metal: str,
         _append_bridge_atoms(all_atoms, pairs)
         return perp_dir  # caller stores this in chosen_dirs
 
-    # ── Assemble: metals first, then bridges, then terminals ─────────────────
+    # -- Assemble: metals first, then bridges, then terminals -----------------
     # Placing bridges before terminals ensures terminal clearance sweep sees
     # the real bridge positions rather than relying on dry-run predictions.
 
@@ -1102,7 +1102,7 @@ def dimer(metal: str,
         ligand_names=list(t_m1) + list(t_m2) + ([bridge] * n if bridge else []),
     )
 
-    # ── validation gate ───────────────────────────────────────────────────────
+    # -- validation gate -------------------------------------------------------
     mol.validation = validate(mol)
     if not mol.validation.passed:
         raise ValueError(
@@ -1112,7 +1112,7 @@ def dimer(metal: str,
     return mol
 
 
-# ── trimer() ──────────────────────────────────────────────────────────────────
+# -- trimer() ------------------------------------------------------------------
 
 def trimer(metal: str,
            ox: int,
@@ -1207,7 +1207,7 @@ def trimer(metal: str,
 
     pairs_list = [(0, 1), (1, 2)] if arrangement == "linear" else [(0,1),(1,2),(2,0)]
 
-    # ── Assemble: metals → bridges → terminals (per metal) ───────────────────
+    # -- Assemble: metals -> bridges -> terminals (per metal) -------------------
     # Bridges are placed first (positions determined by M-M geometry alone).
     # Terminals are placed after, so the clearance sweep sees real bridge atoms.
 
@@ -1225,33 +1225,33 @@ def trimer(metal: str,
     # 2. All bridges (n_bridges_per_pair bridges per pair)
     bridge_atoms_added    = 0
     chosen_dirs_trimer: List[np.ndarray] = []
-    global_bridge_idx     = 0   # monotonic index across all pair×bridge combinations
+    global_bridge_idx     = 0   # monotonic index across all pairxbridge combinations
 
-    # ── Special case: triangular + 2 bridges per pair ─────────────────────────
+    # -- Special case: triangular + 2 bridges per pair -------------------------
     # A triangular arrangement has an odd 3-cycle, making it topologically
-    # impossible to assign ±z bridge directions without a pair of adjacent +z
+    # impossible to assign +/-z bridge directions without a pair of adjacent +z
     # bridges meeting at the same metal and clashing.
     #
-    # Fix: a coordinated ±α tilt scheme where the sign alternates between pairs
-    # so every shared metal receives one +α and one −α bridge from each edge.
-    # α is derived analytically per bridge type by maximising the minimum
-    # inter-edge O···O distance:
+    # Fix: a coordinated +/-alpha tilt scheme where the sign alternates between pairs
+    # so every shared metal receives one +alpha and one -alpha bridge from each edge.
+    # alpha is derived analytically per bridge type by maximising the minimum
+    # inter-edge O***O distance:
     #
-    #   Bridge type  │  α (deg)  │  min O···O (Å)  │  geometry note
-    #   ─────────────┼───────────┼─────────────────┼─────────────────────────
-    #   mu-HCOO      │   35      │   2.20          │  O-C-O bar, target_oo=2.2
-    #   mu-OH        │   70      │   2.36          │  single-atom bridge
-    #   mu-OAc       │   35      │   2.20          │  same O-C-O geometry
-    #   mu-Cl        │   35      │   2.20          │  donor radius similar to O
-    #   (default)    │   35      │    —            │  conservative fallback
+    #   Bridge type  |  alpha (deg)  |  min O***O (Angstrom)  |  geometry note
+    #   -------------+-----------+-----------------+-------------------------
+    #   mu-HCOO      |   35      |   2.20          |  O-C-O bar, target_oo=2.2
+    #   mu-OH        |   70      |   2.36          |  single-atom bridge
+    #   mu-OAc       |   35      |   2.20          |  same O-C-O geometry
+    #   mu-Cl        |   35      |   2.20          |  donor radius similar to O
+    #   (default)    |   35      |    --            |  conservative fallback
     #
     # Triangular nbpp=3 is NOT handled here; packing 6 bridging O donors per
-    # metal at Ni-Ni ≈ 3.2–3.6 Å gives irreducible O···O ≈ 1.3 Å regardless
+    # metal at Ni-Ni ~= 3.2-3.6 Angstrom gives irreducible O***O ~= 1.3 Angstrom regardless
     # of tilt angle, so those cases are excluded from MULTI_BRIDGE_CASES.
 
     _TRIANGULAR_DOUBLE_BRIDGE_ALPHA: dict = {
-        "OH":      70.0,   # single-atom bridge; larger α needed to clear the shared Ni
-        "HCOO":    35.0,   # O-C-O bar; optimised for target_oo = 2.2 Å
+        "OH":      70.0,   # single-atom bridge; larger alpha needed to clear the shared Ni
+        "HCOO":    35.0,   # O-C-O bar; optimised for target_oo = 2.2 Angstrom
         "formate": 35.0,
         "OAc":     35.0,   # same carboxylate geometry
         "acetate": 35.0,
@@ -1278,7 +1278,7 @@ def trimer(metal: str,
             d_mm_ij = np.linalg.norm(mm_vec)
             m_m_vec = mm_vec / d_mm_ij
 
-            # Build a consistent perp basis: perp1 in-plane, perp2 ≈ ±z
+            # Build a consistent perp basis: perp1 in-plane, perp2 ~= +/-z
             _perp1 = np.cross(m_m_vec, _ref_z)
             if np.linalg.norm(_perp1) < 1e-6:
                 _perp1 = np.cross(m_m_vec, np.array([1., 0., 0.]))
@@ -1286,8 +1286,8 @@ def trimer(metal: str,
             _perp2  = np.cross(m_m_vec, _perp1)
             _perp2 /= np.linalg.norm(_perp2)
 
-            # Alternating sign: pairs 0,2 → (+α, −α); pair 1 → (−α, +α).
-            # Ensures every shared metal receives one +α and one −α O per edge.
+            # Alternating sign: pairs 0,2 -> (+alpha, -alpha); pair 1 -> (-alpha, +alpha).
+            # Ensures every shared metal receives one +alpha and one -alpha O per edge.
             bridge_signs = [+1, -1] if pair_idx % 2 == 0 else [-1, +1]
 
             base_name = bridge.replace("mu-", "")
@@ -1477,7 +1477,7 @@ def trimer(metal: str,
 
             total_charge += charge_k
 
-    # ── Post-placement H torsion re-optimisation (trimer terminals) ───────────
+    # -- Post-placement H torsion re-optimisation (trimer terminals) -----------
     # Same logic as in _build_single: rotate H-bearing terminal ligands around
     # the M-donor axis to maximise clearance from bridge O atoms and other donors.
     # Only applies to O/N/S/P donors directly bonded to the metal (H2O, OH, NH3),
@@ -1564,7 +1564,7 @@ def trimer(metal: str,
         ligand_names=list(terminal) + ([bridge] * bridge_atoms_added if bridge else []),
     )
 
-    # ── validation gate ───────────────────────────────────────────────────────
+    # -- validation gate -------------------------------------------------------
     mol.validation = validate(mol)
     if not mol.validation.passed:
         raise ValueError(
@@ -1574,14 +1574,14 @@ def trimer(metal: str,
     return mol
 
 
-# ── file output ───────────────────────────────────────────────────────────────
+# -- file output ---------------------------------------------------------------
 
 def poscar(mol: Molecule, filepath: str) -> None:
     """Write Molecule to a VASP POSCAR file."""
     p = Path(filepath)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(poscar_to_string(mol))
-    print(f"✓ POSCAR written to {p}")
+    print(f"OK POSCAR written to {p}")
 
 
 def xyz(mol: Molecule, filepath: str) -> None:
@@ -1589,7 +1589,7 @@ def xyz(mol: Molecule, filepath: str) -> None:
     p = Path(filepath)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(xyz_to_string(mol))
-    print(f"✓ XYZ written to {p}")
+    print(f"OK XYZ written to {p}")
 
 
 def info(mol: Molecule) -> None:
@@ -1602,13 +1602,13 @@ def info(mol: Molecule) -> None:
     print(f"Metal            : {mol.metal_symbol}({mol.metal_ox:+d})")
     print(f"Geometry         : {mol.geometry}")
     print(f"Num atoms        : {mol.num_atoms()}")
-    print(f"Ligands          : {', '.join(mol.ligand_names) if mol.ligand_names else '–'}")
+    print(f"Ligands          : {', '.join(mol.ligand_names) if mol.ligand_names else '-'}")
     print("\nAtom list:")
     for i, a in enumerate(mol.atoms):
         x, y, z = a.position
         print(f"  {i+1:3d}  {a.symbol:3s}  {x:10.4f}  {y:10.4f}  {z:10.4f}")
     warns = check_structure(mol)
     if warns:
-        print(f"\n⚠ {len(warns)} geometry warning(s):")
+        print(f"\n! {len(warns)} geometry warning(s):")
         for w in warns:
             print(f"  {w}")

@@ -1,5 +1,5 @@
 """
-heteroleptic_dimer.py — asymmetric dimer with different ligands on each Ni
+heteroleptic_dimer.py -- asymmetric dimer with different ligands on each Ni
 """
 import numpy as np
 from molbuilder.api import dimer, poscar

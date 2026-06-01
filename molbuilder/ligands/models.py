@@ -53,7 +53,7 @@ class Ligand:
     bite_angle:    Optional[float] = None
     is_bridging:   bool = False
 
-    # ── convenience properties ────────────────────────────────────────────────
+    # -- convenience properties ------------------------------------------------
 
     @property
     def primary_donor(self) -> str:
@@ -65,7 +65,7 @@ class Ligand:
         """Number of coordination vectors consumed at a single metal centre."""
         return self.denticity
 
-    # ── construction helpers ──────────────────────────────────────────────────
+    # -- construction helpers --------------------------------------------------
 
     @classmethod
     def from_dict(cls, name: str, d: dict) -> "Ligand":
@@ -103,7 +103,7 @@ class Ligand:
                 "Check molbuilder.ligands.library or pass a SMILES string directly."
             ) from exc
 
-    # ── serialization ─────────────────────────────────────────────────────────
+    # -- serialization ---------------------------------------------------------
 
     def to_dict(self) -> dict:
         return {

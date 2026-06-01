@@ -14,12 +14,12 @@ All public-facing errors raised by the library are subclasses of
 Hierarchy
 ---------
 MolbuilderError
-├── InvalidLigandError      – unknown or malformed ligand name/spec
-├── GeometryError           – impossible or unsupported geometry
-│   └── ClashError          – atom-atom overlap that cannot be resolved
-├── CoordinationError       – CN / donor count / oxidation-state inconsistency
-├── ChargeError             – charge balance cannot be satisfied
-└── ValidationError         – structure failed post-build validation checks
+|-- InvalidLigandError      - unknown or malformed ligand name/spec
+|-- GeometryError           - impossible or unsupported geometry
+|   \-- ClashError          - atom-atom overlap that cannot be resolved
+|-- CoordinationError       - CN / donor count / oxidation-state inconsistency
+|-- ChargeError             - charge balance cannot be satisfied
+\-- ValidationError         - structure failed post-build validation checks
 """
 
 
@@ -27,7 +27,7 @@ class MolbuilderError(Exception):
     """Base class for all molbuilder errors."""
 
 
-# ── ligand errors ─────────────────────────────────────────────────────────────
+# -- ligand errors -------------------------------------------------------------
 
 class InvalidLigandError(MolbuilderError):
     """
@@ -41,7 +41,7 @@ class InvalidLigandError(MolbuilderError):
     """
 
 
-# ── geometry errors ───────────────────────────────────────────────────────────
+# -- geometry errors -----------------------------------------------------------
 
 class GeometryError(MolbuilderError):
     """
@@ -73,7 +73,7 @@ class ClashError(GeometryError):
         self.clashes: list[str] = clashes or []
 
 
-# ── coordination errors ───────────────────────────────────────────────────────
+# -- coordination errors -------------------------------------------------------
 
 class CoordinationError(MolbuilderError):
     """
@@ -87,7 +87,7 @@ class CoordinationError(MolbuilderError):
     """
 
 
-# ── charge errors ─────────────────────────────────────────────────────────────
+# -- charge errors -------------------------------------------------------------
 
 class ChargeError(MolbuilderError):
     """
@@ -101,7 +101,7 @@ class ChargeError(MolbuilderError):
     """
 
 
-# ── validation errors ─────────────────────────────────────────────────────────
+# -- validation errors ---------------------------------------------------------
 
 class ValidationError(MolbuilderError):
     """
@@ -112,8 +112,8 @@ class ValidationError(MolbuilderError):
 
     Attributes
     ----------
-    summary  : str   – human-readable validation report
-    n_errors : int   – number of error-severity issues
+    summary  : str   - human-readable validation report
+    n_errors : int   - number of error-severity issues
     """
 
     def __init__(self, message: str, summary: str = "", n_errors: int = 0):

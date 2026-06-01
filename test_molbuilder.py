@@ -22,8 +22,8 @@ from molbuilder.core.bond_lengths import get_bond_length
 from molbuilder.core.geometry import suggest_geometry
 
 
-PASS = "✓"
-FAIL = "✗"
+PASS = "OK"
+FAIL = "FAIL"
 results = []
 
 def test(name, fn):
@@ -33,7 +33,7 @@ def test(name, fn):
         results.append((name, True, None))
     except Exception as e:
         print(f"  {FAIL}  {name}")
-        print(f"     → {e}")
+        print(f"     -> {e}")
         traceback.print_exc()
         results.append((name, False, str(e)))
 
@@ -45,7 +45,7 @@ print("=" * 60)
 print("  molbuilder test suite")
 print("=" * 60)
 
-# ── Bond length database ────────────────────────────────────────────
+# -- Bond length database --------------------------------------------
 print("\n[1] Bond length database")
 
 def t_bl_exact():
@@ -64,7 +64,7 @@ test("Exact lookup Fe(III)-O-oct",     t_bl_exact)
 test("Fallback Fe(III)-N-oct",         t_bl_fallback)
 test("Covalent radii fallback (exotic)", t_bl_cov_fallback)
 
-# ── Geometry engines ────────────────────────────────────────────────
+# -- Geometry engines ------------------------------------------------
 print("\n[2] Geometry engines")
 
 from molbuilder.core.geometry import get_geometry_vectors
@@ -76,7 +76,7 @@ def t_oct():
     # All unit vectors
     for v in vecs:
         assert abs(np.linalg.norm(v) - 1.0) < 1e-6
-    # All mutually 90° or 180°
+    # All mutually 90deg or 180deg
     for i in range(6):
         for j in range(i+1, 6):
             d = abs(np.dot(vecs[i], vecs[j]))
@@ -89,7 +89,7 @@ def t_sqp():
 def t_tet():
     vecs = get_geometry_vectors("tet")
     assert len(vecs) == 4
-    # All angles should be tetrahedral (~109.47°)
+    # All angles should be tetrahedral (~109.47deg)
     cos_tet = -1/3
     for i in range(4):
         for j in range(i+1, 4):
@@ -111,7 +111,7 @@ test("Tetrahedral geometry",           t_tet)
 test("Trigonal bipyramidal geometry",  t_tbp)
 test("Linear geometry",                t_lin)
 
-# ── Ligand library ──────────────────────────────────────────────────
+# -- Ligand library --------------------------------------------------
 print("\n[3] Ligand library")
 
 from molbuilder.ligands.library import get_ligand
@@ -146,7 +146,7 @@ test("bpy bidentate",   t_lig_bpy)
 test("Alias 'aqua'",    t_lig_alias)
 test("EDTA hexadentate",t_lig_EDTA)
 
-# ── Complex builder ─────────────────────────────────────────────────
+# -- Complex builder -------------------------------------------------
 print("\n[4] Mononuclear complex builder")
 
 def t_FeIII_oct():
@@ -182,12 +182,12 @@ def t_CoIII_tris_en():
     assert "Co" in [a.symbol for a in mol.atoms]
 
 def t_charge_calc():
-    # [Fe(H2O)6]3+: Fe(III) + 6 H2O → charge = +3
+    # [Fe(H2O)6]3+: Fe(III) + 6 H2O -> charge = +3
     mol = build("Fe", ox=3, ligands=["H2O"]*6)
     assert mol.charge == 3, f"Expected +3, got {mol.charge}"
 
 def t_charge_anionic():
-    # [FeCl6]3-: Fe(III) + 6 Cl- → charge = 3-6 = -3
+    # [FeCl6]3-: Fe(III) + 6 Cl- -> charge = 3-6 = -3
     mol = build("Fe", ox=3, ligands=["Cl"]*6)
     assert mol.charge == -3, f"Expected -3, got {mol.charge}"
 
@@ -200,7 +200,7 @@ test("[Co(en)3]3+ octahedral",      t_CoIII_tris_en)
 test("Charge +3 for [Fe(H2O)6]3+",  t_charge_calc)
 test("Charge -3 for [FeCl6]3-",     t_charge_anionic)
 
-# ── POSCAR output ───────────────────────────────────────────────────
+# -- POSCAR output ---------------------------------------------------
 print("\n[5] POSCAR output")
 
 def t_poscar_writes():
@@ -229,7 +229,7 @@ def t_poscar_vacuum():
     mol = build("Fe", ox=2, ligands=["H2O"]*6)
     c15 = poscar_to_string(mol, vacuum=15.0)
     c20 = poscar_to_string(mol, vacuum=20.0)
-    # Larger vacuum → larger box → larger lattice vector
+    # Larger vacuum -> larger box -> larger lattice vector
     def box_size(content):
         lines = content.splitlines()
         return float(lines[2].split()[0])
@@ -249,7 +249,7 @@ test("POSCAR structure valid",       t_poscar_structure)
 test("POSCAR vacuum box scaling",    t_poscar_vacuum)
 test("XYZ file written",             t_xyz_writes)
 
-# ── Dimers ──────────────────────────────────────────────────────────
+# -- Dimers ----------------------------------------------------------
 print("\n[6] Dimer builder")
 
 def t_dimer_Rh():
@@ -267,11 +267,11 @@ def t_dimer_poscar():
     path = poscar(mol, str(outdir / "Rh2_dimer.POSCAR"))
     assert Path(path).exists()
 
-test("[Rh(CO)2(μ-Cl)]2 dimer",   t_dimer_Rh)
-test("[Pd2(μ-Cl)2Cl2] dimer",    t_dimer_Pd)
+test("[Rh(CO)2(mu-Cl)]2 dimer",   t_dimer_Rh)
+test("[Pd2(mu-Cl)2Cl2] dimer",    t_dimer_Pd)
 test("Dimer POSCAR output",       t_dimer_poscar)
 
-# ── Trimers ─────────────────────────────────────────────────────────
+# -- Trimers ---------------------------------------------------------
 print("\n[7] Trimer builder")
 
 def t_trimer_tri():
@@ -296,7 +296,7 @@ test("Ru3 triangular trimer",     t_trimer_tri)
 test("Fe3 linear trimer",         t_trimer_lin)
 test("Trimer POSCAR output",      t_trimer_poscar)
 
-# ── Summary ─────────────────────────────────────────────────────────
+# -- Summary ---------------------------------------------------------
 print()
 print("=" * 60)
 n_pass = sum(1 for _, ok, _ in results if ok)

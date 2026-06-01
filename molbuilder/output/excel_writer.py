@@ -6,9 +6,9 @@ Write energetics results to a formatted Excel workbook.
 Colour coding:
     Dark-blue header row
     Light-blue alternate data rows
-    Yellow   — structure did not converge
-    Amber    — bond STRETCHED (> 1.20× initial M-L length)
-    Red      — bond BROKEN    (> 1.35× initial M-L length, ligand likely dissociated)
+    Yellow   -- structure did not converge
+    Amber    -- bond STRETCHED (> 1.20x initial M-L length)
+    Red      -- bond BROKEN    (> 1.35x initial M-L length, ligand likely dissociated)
 """
 
 from __future__ import annotations
@@ -16,15 +16,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List
 
-_HDR_FILL   = "1F4E79"   # dark blue  — header
-_HDR_FONT   = "FFFFFF"   # white      — header text
-_ALT_FILL   = "D6E4F0"   # light blue — alternate rows
-_NOCONV_FILL= "FFF2CC"   # yellow     — not converged
-_STRETCH_FILL="FCE4D6"   # amber      — bond stretched
-_BROKEN_FILL = "FF0000"  # red        — bond broken / dissociated
+_HDR_FILL   = "1F4E79"   # dark blue  -- header
+_HDR_FONT   = "FFFFFF"   # white      -- header text
+_ALT_FILL   = "D6E4F0"   # light blue -- alternate rows
+_NOCONV_FILL= "FFF2CC"   # yellow     -- not converged
+_STRETCH_FILL="FCE4D6"   # amber      -- bond stretched
+_BROKEN_FILL = "FF0000"  # red        -- bond broken / dissociated
 
 
-# ── column specification ──────────────────────────────────────────────────────
+# -- column specification ------------------------------------------------------
 # (header, row_key, col_width, number_format, centre)
 
 _COLS = [
@@ -39,7 +39,7 @@ _COLS = [
     ("Arrangement",       "arrangement",          12, None,        True),
     ("Ligands",           "ligand_combo",         28, None,        False),
     ("# atoms",           "n_atoms",               7, None,        True),
-    # ── xTB energetics ────────────────────────────────────────────────────────
+    # -- xTB energetics --------------------------------------------------------
     ("E_xtb (eV)",        "relax_energy_eV",      13, "0.0000",    True),
     ("G_xtb (eV)",        "relax_gibbs_eV",       13, "0.0000",    True),
     ("ZPE_xtb (eV)",      "relax_zpe_eV",         12, "0.0000",    True),
@@ -47,11 +47,11 @@ _COLS = [
     ("S_xtb (eV/K)",      "relax_entropy_eV_K",   13, "0.000000",  True),
     ("T (K)",             "relax_T_K",             7, "0.0",       True),
     ("P (Pa)",            "relax_P_Pa",            8, "0",         True),
-    # ── MACE energetics ───────────────────────────────────────────────────────
+    # -- MACE energetics -------------------------------------------------------
     ("E_mace (eV)",       "relax_mace_energy_eV", 13, "0.0000",    True),
     ("G_mace (eV)",       "relax_mace_gibbs_eV",  13, "0.0000",    True),
-    ("ΔE mace–xtb (eV)",  "relax_dE_mace_xtb_eV",13, "0.0000",    True),
-    # ── quality / bond status ─────────────────────────────────────────────────
+    ("DeltaE mace-xtb (eV)",  "relax_dE_mace_xtb_eV",13, "0.0000",    True),
+    # -- quality / bond status -------------------------------------------------
     ("Converged",         "relax_converged",      10, None,        True),
     ("Steps",             "relax_steps",           7, None,        True),
     ("Backend",           "relax_backend",        10, None,        True),
@@ -92,7 +92,7 @@ def write_energetics_excel(
     path.parent.mkdir(parents=True, exist_ok=True)
     wb   = Workbook()
 
-    # ── shared styles ─────────────────────────────────────────────────────────
+    # -- shared styles ---------------------------------------------------------
     def _font(bold=False, color="000000", size=10):
         return Font(name="Arial", bold=bold, color=color, size=size)
 
@@ -113,7 +113,7 @@ def write_energetics_excel(
     centre_al  = Alignment(horizontal="center", vertical="center")
     left_al    = Alignment(horizontal="left",   vertical="center")
 
-    # ── Sheet 1: Energetics ───────────────────────────────────────────────────
+    # -- Sheet 1: Energetics ---------------------------------------------------
     ws = wb.active
     ws.title         = "Energetics"
     ws.freeze_panes  = "A2"
@@ -158,22 +158,22 @@ def write_energetics_excel(
 
     ws.auto_filter.ref = f"A1:{get_column_letter(len(_COLS))}1"
 
-    # ── Sheet 2: Bond status legend ───────────────────────────────────────────
+    # -- Sheet 2: Bond status legend -------------------------------------------
     ws_leg = wb.create_sheet("Legend")
     ws_leg.column_dimensions["A"].width = 16
     ws_leg.column_dimensions["B"].width = 55
 
     legend = [
         ("Bond status",   "Explanation",              True),
-        (BondStatus.OK,       "All M-L bonds within 1.20× initial length",  False),
-        (BondStatus.STRETCHED,"Longest M-L bond 1.20–1.35× initial (possible strain)", False),
-        (BondStatus.BROKEN,   "At least one M-L bond > 1.35× initial (ligand likely dissociated)", False),
+        (BondStatus.OK,       "All M-L bonds within 1.20x initial length",  False),
+        (BondStatus.STRETCHED,"Longest M-L bond 1.20-1.35x initial (possible strain)", False),
+        (BondStatus.BROKEN,   "At least one M-L bond > 1.35x initial (ligand likely dissociated)", False),
         ("", "", False),
         ("Row colour",    "Meaning",                  True),
         ("Blue (alt)",    "Clean structure",           False),
         ("Yellow",        "Geometry did not converge within step limit", False),
         ("Amber",         "Bond STRETCHED",            False),
-        ("Red",           "Bond BROKEN — review before DFT", False),
+        ("Red",           "Bond BROKEN -- review before DFT", False),
     ]
     fills = {
         "Blue (alt)": alt_fill, "Yellow": noconv_fill,
@@ -186,7 +186,7 @@ def write_energetics_excel(
         if a in fills:
             ca.fill = cb.fill = fills[a]
 
-    # ── Sheet 3: Summary ──────────────────────────────────────────────────────
+    # -- Sheet 3: Summary ------------------------------------------------------
     ws2 = wb.create_sheet("Summary")
     ws2["A1"] = title
     ws2["A1"].font = _font(bold=True, size=13, color=_HDR_FILL)

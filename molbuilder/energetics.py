@@ -9,15 +9,15 @@ the standalone compute_energetics.py CLI.
 
 Public API
 ----------
-    run_energetics(rows, mols, ...)   → updated rows list with energy columns
-    molecule_name(row)                → human-readable label from a row dict
-    BondStatus                        → "OK" | "STRETCHED" | "BROKEN"
+    run_energetics(rows, mols, ...)   -> updated rows list with energy columns
+    molecule_name(row)                -> human-readable label from a row dict
+    BondStatus                        -> "OK" | "STRETCHED" | "BROKEN"
 
 Bond status definitions
 -----------------------
-    OK          all M-L distances within 1.20× initial
-    STRETCHED   longest M-L bond is 1.20–1.35× initial  (possible strain)
-    BROKEN      at least one M-L bond > 1.35× initial   (ligand dissociated)
+    OK          all M-L distances within 1.20x initial
+    STRETCHED   longest M-L bond is 1.20-1.35x initial  (possible strain)
+    BROKEN      at least one M-L bond > 1.35x initial   (ligand dissociated)
 
 The threshold values are conservative and reflect that xTB optimised
 M-L distances typically change by < 10% from the idealised template.
@@ -34,15 +34,15 @@ from molbuilder.core.molecule import Molecule
 from molbuilder.output.writer import write_poscar, write_csv, write_json
 
 
-# ── bond status constants ─────────────────────────────────────────────────────
+# -- bond status constants -----------------------------------------------------
 
 class BondStatus:
     OK        = "OK"
     STRETCHED = "STRETCHED"
     BROKEN    = "BROKEN"
 
-_STRETCHED_THRESHOLD = 1.20   # > this → STRETCHED
-_BROKEN_THRESHOLD    = 1.35   # > this → BROKEN
+_STRETCHED_THRESHOLD = 1.20   # > this -> STRETCHED
+_BROKEN_THRESHOLD    = 1.35   # > this -> BROKEN
 
 
 def _bond_status(max_elongation: float) -> str:
@@ -54,7 +54,7 @@ def _bond_status(max_elongation: float) -> str:
     return BondStatus.OK
 
 
-# ── label helper ──────────────────────────────────────────────────────────────
+# -- label helper --------------------------------------------------------------
 
 def molecule_name(row: dict) -> str:
     """Build a concise human-readable name from a row dict."""
@@ -71,7 +71,7 @@ def molecule_name(row: dict) -> str:
     return "  ".join(p for p in parts if p)
 
 
-# ── internal helpers ──────────────────────────────────────────────────────────
+# -- internal helpers ----------------------------------------------------------
 
 def _write_relaxed(mol: Molecule, row: dict, output_dir: Path,
                    suffix: str) -> Path:
@@ -129,7 +129,7 @@ def _empty_energy_cols() -> dict:
     }
 
 
-# ── main pipeline ─────────────────────────────────────────────────────────────
+# -- main pipeline -------------------------------------------------------------
 
 def run_energetics(
     rows:            List[dict],
@@ -157,23 +157,23 @@ def run_energetics(
 
     Broken bonds are automatically detected and flagged in the
     ``bond_status`` column as ``"OK"``, ``"STRETCHED"``, or ``"BROKEN"``.
-    The thresholds are 1.20× (STRETCHED) and 1.35× (BROKEN) of the
+    The thresholds are 1.20x (STRETCHED) and 1.35x (BROKEN) of the
     initial M-L bond length.  Structures with broken bonds are highlighted
     in orange in the Excel output and can be filtered in the CSV.
 
     Parameters
     ----------
     rows            : Row dicts from write_all() or enumerate_complexes().
-    mols            : Mapping from row["filename"] → Molecule.
+    mols            : Mapping from row["filename"] -> Molecule.
     backend         : "xtb", "mace", or "both".
-    compute_thermo  : If True, run freq → G(T, P).
-                      If False, geometry relax only → E.
-    T, P            : Temperature (K) and pressure (Pa) for ΔG.
+    compute_thermo  : If True, run freq -> G(T, P).
+                      If False, geometry relax only -> E.
+    T, P            : Temperature (K) and pressure (Pa) for DeltaG.
     fmax, steps     : Geometry optimiser settings.
-    xtb_model       : Override xTB model  (None → GFN2-xTB).
-    mace_model      : Override MACE model (None → mh-1).
+    xtb_model       : Override xTB model  (None -> GFN2-xTB).
+    mace_model      : Override MACE model (None -> mh-1).
     mace_device     : "cpu" or "cuda".
-    constrain_bonds : Prevent M-L bond dissociation.  Default False — bond
+    constrain_bonds : Prevent M-L bond dissociation.  Default False -- bond
                       breaking is meaningful information.  See relaxation.py
                       for guidance on when to enable this.
     output_dir      : Where to write relaxed POSCARs and JSON sidecars.
@@ -268,7 +268,7 @@ def run_energetics(
 
             elif backend == "xtb+mace":
                 # Hybrid: xTB geometry + frequencies, MACE single-point energy.
-                # G_hybrid = E_MACE + (G_xTB - E_xTB)  — thermal correction transfer.
+                # G_hybrid = E_MACE + (G_xTB - E_xTB)  -- thermal correction transfer.
                 res = xtb_relax_mace_singlepoint(
                     mol,
                     xtb_model       = xtb_model,
@@ -341,17 +341,31 @@ def run_energetics(
                                         f"_relaxed_{backend}")
                     row["relax_filename"] = str(rp)
 
-            # ── verbose output ────────────────────────────────────────────────
+            # -- verbose output ------------------------------------------------
             if verbose:
-                e = row.get("relax_energy_eV")
-                g = row.get("relax_gibbs_eV")
-                bs = row.get("bond_status", BondStatus.OK)
-                cv = row.get("relax_converged", True)
-                e_str = f"E={e:.3f}eV" if e is not None else ""
-                g_str = f"  G={g:.3f}eV" if g is not None else ""
-                b_str = (f"  ⚠ {bs}" if bs != BondStatus.OK else "")
-                c_str = ("  ! not converged" if cv is False else "")
-                print(f"{e_str}{g_str}{b_str}{c_str}")
+                bk  = row.get("relax_backend", backend)
+                bs  = row.get("bond_status", BondStatus.OK)
+                cv  = row.get("relax_converged", True)
+                b_str = f"  ! {bs}" if bs != BondStatus.OK else ""
+                c_str = "  ! not converged" if cv is False else ""
+
+                if bk == "xtb+mace":
+                    # Show xTB and MACE energies side by side so the user
+                    # can see both levels. G is the hybrid absolute Gibbs
+                    # energy (not a reaction energy -- DeltaG comes later).
+                    e_xtb  = row.get("relax_energy_eV")
+                    e_mace = row.get("relax_mace_energy_eV")
+                    g_hyb  = row.get("relax_gibbs_eV")
+                    e_xtb_str  = f"E_xTB={e_xtb:.3f}" if e_xtb  is not None else ""
+                    e_mace_str = f"  E_MACE={e_mace:.3f}" if e_mace is not None else ""
+                    g_str      = f"  G_hybrid={g_hyb:.3f}" if g_hyb  is not None else ""
+                    print(f"{e_xtb_str}{e_mace_str}{g_str} eV{b_str}{c_str}")
+                else:
+                    e = row.get("relax_energy_eV") or row.get("relax_mace_energy_eV")
+                    g = row.get("relax_gibbs_eV")
+                    e_str = f"E={e:.3f}" if e is not None else ""
+                    g_str = f"  G={g:.3f}" if g is not None else ""
+                    print(f"{e_str}{g_str} eV{b_str}{c_str}")
 
         except Exception as exc:
             if verbose:
@@ -361,7 +375,7 @@ def run_energetics(
 
         updated.append(row)
 
-    # ── write outputs ─────────────────────────────────────────────────────────
+    # -- write outputs ---------------------------------------------------------
     n_broken    = sum(1 for r in updated if r.get("bond_status") == BondStatus.BROKEN)
     n_stretched = sum(1 for r in updated if r.get("bond_status") == BondStatus.STRETCHED)
     n_conv      = sum(1 for r in updated if r.get("relax_converged") is True)
@@ -372,25 +386,25 @@ def run_energetics(
         print(f"\n  Completed    : {n_done} / {len(rows)}")
         print(f"  Converged    : {n_conv} / {n_done}")
         if n_broken:
-            print(f"  ⚠ BROKEN     : {n_broken}  (bond dissociated during relaxation)")
+            print(f"  ! BROKEN     : {n_broken}  (bond dissociated during relaxation)")
         if n_stretched:
-            print(f"  ~ STRETCHED  : {n_stretched}  (bond elongated > 1.20×)")
+            print(f"  ~ STRETCHED  : {n_stretched}  (bond elongated > 1.20x)")
 
     if csv_file and updated:
         write_csv(updated, Path(csv_file))
         if verbose:
-            print(f"  CSV  → {csv_file}")
+            print(f"  CSV  -> {csv_file}")
 
     if excel_file and updated:
         from molbuilder.output.excel_writer import write_energetics_excel
         write_energetics_excel(updated, Path(excel_file))
         if verbose:
-            print(f"  XLSX → {excel_file}")
+            print(f"  XLSX -> {excel_file}")
 
     return updated
 
 
-# ── broken-structure reporting ────────────────────────────────────────────────
+# -- broken-structure reporting ------------------------------------------------
 
 def write_broken_report(
     broken: list,
@@ -401,8 +415,8 @@ def write_broken_report(
     Write a dedicated report for structures with bond_status == BROKEN.
 
     Creates:
-        <output_dir>/broken/broken_structures.csv   — CSV with all broken rows
-        <output_dir>/broken/*.POSCAR                — original (pre-relax) POSCARs
+        <output_dir>/broken/broken_structures.csv   -- CSV with all broken rows
+        <output_dir>/broken/*.POSCAR                -- original (pre-relax) POSCARs
 
     Parameters
     ----------
@@ -443,22 +457,22 @@ def write_broken_report(
     if verbose:
         print()
         print("=" * 60)
-        print(f"  ⚠  {len(broken)} BROKEN STRUCTURE(S) — REVIEW BEFORE DFT")
+        print(f"  !  {len(broken)} BROKEN STRUCTURE(S) -- REVIEW BEFORE DFT")
         print("=" * 60)
         for mol, row in broken:
             geom  = row.get("geometry", "?")
             ligs  = row.get("ligand_combo", "?")
             elong = row.get("bond_max_elongation")
-            e_str = f"  max_elong={elong:.2f}×" if elong else ""
-            print(f"  • {mol.formula:15s}  [{geom}] {ligs}{e_str}")
-        print(f"\n  POSCARs → {broken_dir}/")
-        print(f"  CSV     → {csv_path}")
+            e_str = f"  max_elong={elong:.2f}x" if elong else ""
+            print(f"  * {mol.formula:15s}  [{geom}] {ligs}{e_str}")
+        print(f"\n  POSCARs -> {broken_dir}/")
+        print(f"  CSV     -> {csv_path}")
         print("=" * 60)
         print()
-        print("  These structures had at least one M-L bond stretch > 1.35× its")
+        print("  These structures had at least one M-L bond stretch > 1.35x its")
         print("  initial length during xTB relaxation, suggesting the coordination")
         print("  mode is strained or a ligand dissociated.  Options:")
         print("   1. Inspect the POSCAR manually and fix the geometry.")
         print("   2. Re-run with constrain_bonds=True to force the topology.")
-        print("   3. Discard — if xTB says it's unstable, DFT likely will too.")
+        print("   3. Discard -- if xTB says it's unstable, DFT likely will too.")
         print("=" * 60)

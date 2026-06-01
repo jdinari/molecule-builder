@@ -1,5 +1,5 @@
 """
-build_single.py — build one complex and write a POSCAR
+build_single.py -- build one complex and write a POSCAR
 """
 from molbuilder.api import build, poscar, info
 

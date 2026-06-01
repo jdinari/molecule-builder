@@ -45,7 +45,7 @@ class TestValidationError:
         """
         4 mu-OH bridges on a short Ni-Ni distance is geometrically impossible;
         dimer() should raise (currently as ValueError wrapping validation failure).
-        We just verify it raises — the exact type will change when we migrate
+        We just verify it raises -- the exact type will change when we migrate
         dimer() to raise ValidationError directly.
         """
         with pytest.raises(Exception):  # ValueError today, ValidationError eventually

@@ -1,7 +1,7 @@
 """
 bond_lengths.py
 ===============
-CSD-averaged M–L bond lengths keyed by (metal, oxidation_state, donor_atom, geometry).
+CSD-averaged M-L bond lengths keyed by (metal, oxidation_state, donor_atom, geometry).
 Fallback hierarchy:
   1. Exact match
   2. Same metal/ox/donor, any geometry
@@ -9,11 +9,11 @@ Fallback hierarchy:
   4. Sum of Alvarez (2008) covalent radii
 """
 
-# ──────────────────────────────────────────────────────────────────
-# Bond length database  {(metal, ox, donor, geometry): length_Å}
+# ------------------------------------------------------------------
+# Bond length database  {(metal, ox, donor, geometry): length_Angstrom}
 # geometry keys: 'oct', 'sqp', 'tet', 'tbp', 'lin', 'tp', 'sqpy',
 #                'pbp', 'sapr', 'tpr', 'bent', 'tshaped', 'seesaw', None
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 
 BOND_DB = {
     # ---- Iron ----
@@ -162,7 +162,7 @@ BOND_DB = {
 }
 
 
-# Alvarez 2008 covalent radii (Å) for fallback
+# Alvarez 2008 covalent radii (Angstrom) for fallback
 COVALENT_RADII = {
     "H":  0.31, "He": 0.28, "Li": 1.28, "Be": 0.96, "B":  0.84,
     "C":  0.76, "N":  0.71, "O":  0.66, "F":  0.57, "Ne": 0.58,
@@ -187,7 +187,7 @@ COVALENT_RADII = {
 
 def get_bond_length(metal: str, ox: int, donor_atom: str, geometry: str = None) -> float:
     """
-    Look up M–L bond length with fallback hierarchy.
+    Look up M-L bond length with fallback hierarchy.
     """
     # Normalise geometry string
     geom_aliases = {
@@ -221,4 +221,4 @@ def get_bond_length(metal: str, ox: int, donor_atom: str, geometry: str = None) 
     # 4. Covalent radii fallback
     r_metal = COVALENT_RADII.get(metal, 1.5)
     r_donor = COVALENT_RADII.get(donor_atom, 0.7)
-    return r_metal + r_donor + 0.1   # +0.1 Å empirical correction for dative bonds
+    return r_metal + r_donor + 0.1   # +0.1 Angstrom empirical correction for dative bonds

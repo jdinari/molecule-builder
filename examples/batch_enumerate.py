@@ -1,5 +1,5 @@
 """
-batch_enumerate.py — generate a set of Ni complexes and compute xTB energetics
+batch_enumerate.py -- generate a set of Ni complexes and compute xTB energetics
 
 Install:  pip install tblite ase openpyxl
 """
@@ -43,4 +43,4 @@ rows = run_energetics(
 n_ok      = sum(1 for r in rows if r.get("bond_status") == BondStatus.OK)
 n_broken  = sum(1 for r in rows if r.get("bond_status") == BondStatus.BROKEN)
 print(f"\nOK={n_ok}  BROKEN={n_broken}")
-print(f"Excel → {OUT}/energetics.xlsx  (red rows = broken bonds)")
+print(f"Excel -> {OUT}/energetics.xlsx  (red rows = broken bonds)")

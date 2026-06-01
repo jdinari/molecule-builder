@@ -1,5 +1,5 @@
 """
-isomers.py — enumerate all isomers and write one POSCAR each
+isomers.py -- enumerate all isomers and write one POSCAR each
 """
 from molbuilder.api import build, poscar
 

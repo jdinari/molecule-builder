@@ -1,14 +1,14 @@
 """
-graph.py  — Molecular graph and canonical hashing (beta)
+graph.py  -- Molecular graph and canonical hashing (beta)
 =========================================================
 
 Provides a graph-based canonical hash for molbuilder Molecule objects
 that distinguishes:
 
-    •  Different geometries   (tet ≠ sqp,  sqpy ≠ tbp)
-    •  Different isomers      (cis ≠ trans in sqp / oct)
-    •  Different ligand sets  (H2O ≠ OH)
-    •  Different nuclearities (monomer ≠ dimer)
+    *  Different geometries   (tet != sqp,  sqpy != tbp)
+    *  Different isomers      (cis != trans in sqp / oct)
+    *  Different ligand sets  (H2O != OH)
+    *  Different nuclearities (monomer != dimer)
 
 Two structures get the **same hash** only when they have identical:
     1.  Atom connectivity (the covalent bond graph)
@@ -23,28 +23,28 @@ Algorithm
 ---------
 We build a *labelled multigraph* with two edge types:
 
-    cov   — covalent bond (inferred from pairwise distance vs sum of radii)
-    ang   — donor–donor spatial relationship on the same metal:
-                "adj"    60–120° apart  (cis in octahedral)
-                "trans"  >120° apart    (trans in octahedral)
-                "close"  <60° apart     (equatorial-equatorial in pbp etc.)
+    cov   -- covalent bond (inferred from pairwise distance vs sum of radii)
+    ang   -- donor-donor spatial relationship on the same metal:
+                "adj"    60-120deg apart  (cis in octahedral)
+                "trans"  >120deg apart    (trans in octahedral)
+                "close"  <60deg apart     (equatorial-equatorial in pbp etc.)
 
-Four rounds of Weisfeiler–Lehman relabelling then produce a canonical label
-per atom, and the sorted multiset of those labels — together with the geometry
-name — is the hash.
+Four rounds of Weisfeiler-Lehman relabelling then produce a canonical label
+per atom, and the sorted multiset of those labels -- together with the geometry
+name -- is the hash.
 
 The geometry name is included explicitly so that
-    Ni(HCOO)2(H2O)2 tetrahedral  ≠  Ni(HCOO)2(H2O)2 square-planar
+    Ni(HCOO)2(H2O)2 tetrahedral  !=  Ni(HCOO)2(H2O)2 square-planar
 even though their covalent bond graphs are identical.
 
 Public API
 ----------
-    canonical_hash(mol)                     → tuple
-    MolGraph(mol)                           → graph object with .hash attribute
-    DeduplicationResult(original, unique, groups) → named result from deduplicate()
-    deduplicate(mols_and_rows, verbose)     → DeduplicationResult
+    canonical_hash(mol)                     -> tuple
+    MolGraph(mol)                           -> graph object with .hash attribute
+    DeduplicationResult(original, unique, groups) -> named result from deduplicate()
+    deduplicate(mols_and_rows, verbose)     -> DeduplicationResult
 
-The module is intentionally standalone — it imports only from the core
+The module is intentionally standalone -- it imports only from the core
 Molecule class and numpy.
 """
 
@@ -59,8 +59,8 @@ import numpy as np
 
 from molbuilder.core.molecule import Molecule
 
-# ── covalent radii (pm → Å) used for bond inference ──────────────────────────
-# Pyykkö & Atsumi (2009); metals use single-bond values
+# -- covalent radii (pm -> Angstrom) used for bond inference --------------------------
+# Pyykko & Atsumi (2009); metals use single-bond values
 _COVALENT_RADII: Dict[str, float] = {
     "H":  0.31, "C":  0.76, "N":  0.71, "O":  0.66, "F":  0.57,
     "S":  1.05, "P":  1.07, "Cl": 1.02, "Br": 1.20, "I":  1.39,
@@ -69,7 +69,7 @@ _COVALENT_RADII: Dict[str, float] = {
     "Cr": 1.39, "Mn": 1.61, "Zn": 1.22, "Ag": 1.45,
 }
 _COVALENT_BOND_TOL  = 1.30   # multiply sum-of-radii by this to get max bond length
-_METAL_DONOR_CUTOFF = 2.90   # Å — M-L bonds identified up to this distance
+_METAL_DONOR_CUTOFF = 2.90   # Angstrom -- M-L bonds identified up to this distance
 
 
 def _infer_bonds(atoms) -> List[Tuple[int, int]]:
@@ -89,7 +89,7 @@ def _infer_bonds(atoms) -> List[Tuple[int, int]]:
 
 
 def _donor_angle_label(angle_deg: float) -> str:
-    """Bin a donor–donor angle into a coarse spatial label."""
+    """Bin a donor-donor angle into a coarse spatial label."""
     if angle_deg < 60.0:
         return "close"      # e.g. equatorial pairs in pbp
     if angle_deg < 120.0:
@@ -97,7 +97,7 @@ def _donor_angle_label(angle_deg: float) -> str:
     return "trans"          # trans in sqp / oct
 
 
-# ── MolGraph ─────────────────────────────────────────────────────────────────
+# -- MolGraph -----------------------------------------------------------------
 
 class MolGraph:
     """
@@ -109,7 +109,7 @@ class MolGraph:
     hash       : canonical tuple (use == for comparison)
     n_atoms    : number of atoms
     bonds      : list of (i, j) covalent bond pairs
-    ang_edges  : list of (i, j, label) donor–donor angular edges
+    ang_edges  : list of (i, j, label) donor-donor angular edges
 
     The graph is built once in __init__; the hash is computed lazily.
     """
@@ -121,12 +121,12 @@ class MolGraph:
         self.ang_edges = self._build_angular_edges()
         self._hash: Optional[tuple] = None
 
-    # ── graph construction ────────────────────────────────────────────────────
+    # -- graph construction ----------------------------------------------------
 
     def _build_angular_edges(self) -> List[Tuple[int, int, str]]:
         """
         For every metal centre, find all donor atoms within
-        _METAL_DONOR_CUTOFF and add donor–donor angular edges.
+        _METAL_DONOR_CUTOFF and add donor-donor angular edges.
         """
         atoms   = self.mol.atoms
         metal   = self.mol.metal_symbol
@@ -161,7 +161,7 @@ class MolGraph:
 
         return ang_edges
 
-    # ── WL hashing ───────────────────────────────────────────────────────────
+    # -- WL hashing -----------------------------------------------------------
 
     @property
     def hash(self) -> tuple:
@@ -171,7 +171,7 @@ class MolGraph:
 
     def _compute_hash(self, wl_iterations: int = 4) -> tuple:
         """
-        Four rounds of Weisfeiler–Lehman relabelling over the multigraph.
+        Four rounds of Weisfeiler-Lehman relabelling over the multigraph.
 
         The initial node label is the element symbol.  After each round,
         a node's label becomes a canonical string encoding:
@@ -206,11 +206,11 @@ class MolGraph:
                 new_labels.append(f"{labels[i]}|{cov_nbr}|{ang_nbr}")
             labels = new_labels
 
-        # Append geometry to each label so tet ≠ sqp even with same ligands
+        # Append geometry to each label so tet != sqp even with same ligands
         final = tuple(sorted(f"{lbl}@{geom}" for lbl in labels))
         return final
 
-    # ── convenience ──────────────────────────────────────────────────────────
+    # -- convenience ----------------------------------------------------------
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, MolGraph):
@@ -225,7 +225,7 @@ class MolGraph:
                 f"n_bonds={len(self.bonds)}, n_ang={len(self.ang_edges)})")
 
 
-# ── public canonical_hash function ────────────────────────────────────────────
+# -- public canonical_hash function --------------------------------------------
 
 def canonical_hash(mol: Molecule) -> tuple:
     """
@@ -233,7 +233,7 @@ def canonical_hash(mol: Molecule) -> tuple:
 
     Two molecules have the same hash if and only if they have:
       - the same covalent bond graph (element-labelled)
-      - the same donor–donor angular relationships on every metal
+      - the same donor-donor angular relationships on every metal
       - the same declared coordination geometry
 
     This correctly distinguishes cis from trans isomers, tet from sqp
@@ -246,12 +246,12 @@ def canonical_hash(mol: Molecule) -> tuple:
 
     Returns
     -------
-    tuple of str — use == for comparison; hashable for dict/set keys.
+    tuple of str -- use == for comparison; hashable for dict/set keys.
     """
     return MolGraph(mol).hash
 
 
-# ── DeduplicationResult ───────────────────────────────────────────────────────
+# -- DeduplicationResult -------------------------------------------------------
 
 @dataclass
 class DeduplicationResult:
@@ -262,7 +262,7 @@ class DeduplicationResult:
     ----------
     original   : all (mol, row) pairs passed in
     unique     : subset with one representative per hash group
-    groups     : dict mapping canonical_hash → list of (mol, row) pairs
+    groups     : dict mapping canonical_hash -> list of (mol, row) pairs
                  groups with len > 1 are the duplicate sets
     n_removed  : number of structures removed
     """
@@ -294,7 +294,7 @@ class DeduplicationResult:
                 rep = mols[0]
                 geom = rep[1].get("geometry", "?")
                 lines.append(
-                    f"    [{len(mols)}×] {rep[0].formula:15s}"
+                    f"    [{len(mols)}x] {rep[0].formula:15s}"
                     f"  geom={geom:5s}  cn={rep[1].get('cn','?')}"
                     f"  {rep[1].get('ligand_combo','?')}"
                 )
@@ -304,11 +304,11 @@ class DeduplicationResult:
 
     def __repr__(self) -> str:
         return (f"DeduplicationResult("
-                f"{len(self.original)} → {len(self.unique)} unique, "
+                f"{len(self.original)} -> {len(self.unique)} unique, "
                 f"{self.n_removed} removed)")
 
 
-# ── deduplicate ───────────────────────────────────────────────────────────────
+# -- deduplicate ---------------------------------------------------------------
 
 def deduplicate(
     mols_and_rows: List[Tuple[Molecule, Dict[str, Any]]],
@@ -319,7 +319,7 @@ def deduplicate(
 
     For each group of structures that share a canonical hash, only the first
     encountered is kept (the representative).  The order of the input list
-    determines which representative is chosen — in practice this is the order
+    determines which representative is chosen -- in practice this is the order
     structures are yielded by enumerate_complexes().
 
     Parameters
@@ -331,7 +331,7 @@ def deduplicate(
     -------
     DeduplicationResult with .unique, .groups, .n_removed, and .summary()
     """
-    seen:   Dict[tuple, int] = {}   # hash → index in unique list
+    seen:   Dict[tuple, int] = {}   # hash -> index in unique list
     unique: List[Tuple[Molecule, Dict[str, Any]]] = []
     groups: Dict[tuple, List[Tuple[Molecule, Dict[str, Any]]]] = defaultdict(list)
 
@@ -358,7 +358,7 @@ def deduplicate(
                     f"  dup  {mol.formula:15s} "
                     f"geom={row.get('geometry','?'):5s} "
                     f"{row.get('ligand_combo','')[:30]:30s}"
-                    f"  ← same as {rep[1].get('geometry','?')} "
+                    f"  <- same as {rep[1].get('geometry','?')} "
                     f"{rep[1].get('ligand_combo','')[:30]}"
                 )
 

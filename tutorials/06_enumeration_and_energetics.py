@@ -1,5 +1,5 @@
 """
-Tutorial 06 — Batch enumeration and energetics
+Tutorial 06 -- Batch enumeration and energetics
 ===============================================
 
 Shows how the generate_ni_complexes.py script works under the hood,
@@ -27,7 +27,7 @@ XLSX     = OUT_DIR / "tutorial06.xlsx"
 OUT_DIR.mkdir(exist_ok=True)
 
 
-# ── 1. Generate a small set of Ni(II) monomers ───────────────────────────────
+# -- 1. Generate a small set of Ni(II) monomers -------------------------------
 
 print("Generating structures ...")
 
@@ -59,9 +59,9 @@ n_dimer = sum(1 for r in rows if "dimer" in r["structure"])
 print(f"Generated {len(rows)} structures: {n_mono} monomers, {n_dimer} dimers")
 
 
-# ── 2. Run xTB energetics ─────────────────────────────────────────────────────
+# -- 2. Run xTB energetics -----------------------------------------------------
 
-print("\nRunning xTB single-point energetics (no freq — just ΔE) ...")
+print("\nRunning xTB single-point energetics (no freq -- just DeltaE) ...")
 
 mol_lookup = {row["filename"]: mol for mol, row in zip(mols_in_order, rows)}
 
@@ -69,7 +69,7 @@ rows = run_energetics(
     rows    = rows,
     mols    = mol_lookup,
     backend = "xtb",
-    compute_thermo  = False,   # True → adds freq + ΔG, slower
+    compute_thermo  = False,   # True -> adds freq + DeltaG, slower
     fmax    = 0.05,
     steps   = 200,
     constrain_bonds = False,   # default: detect bond breaking
@@ -80,7 +80,7 @@ rows = run_energetics(
 )
 
 
-# ── 3. Bond status summary ────────────────────────────────────────────────────
+# -- 3. Bond status summary ----------------------------------------------------
 
 print("\n" + "=" * 50)
 n_ok       = sum(1 for r in rows if r.get("bond_status") == BondStatus.OK)
@@ -92,7 +92,7 @@ print(f"  OK        : {n_ok}")
 print(f"  STRETCHED : {n_stretched}")
 print(f"  BROKEN    : {n_broken}  (ligand dissociated during relaxation)")
 if n_error:
-    print(f"  ERROR     : {n_error}  (xTB failed — check structures)")
+    print(f"  ERROR     : {n_error}  (xTB failed -- check structures)")
 
 # Show broken structures
 broken = [r for r in rows if r.get("bond_status") in (BondStatus.BROKEN,)]
@@ -100,13 +100,13 @@ if broken:
     print("\n  Broken bond structures (review before DFT):")
     for r in broken:
         print(f"    {r['formula']:20s}  {r['structure']:15s}  "
-              f"elong={r.get('bond_max_elongation','?'):.2f}×")
+              f"elong={r.get('bond_max_elongation','?'):.2f}x")
 
-print(f"\n  CSV  → {CSV_FILE}")
-print(f"  XLSX → {XLSX}  (colour-coded: red=broken, amber=stretched)")
+print(f"\n  CSV  -> {CSV_FILE}")
+print(f"  XLSX -> {XLSX}  (colour-coded: red=broken, amber=stretched)")
 
 
-# ── 4. ΔE relative to lowest-energy monomer ──────────────────────────────────
+# -- 4. DeltaE relative to lowest-energy monomer ----------------------------------
 
 monomer_rows = [r for r in rows if r["structure"] == "monomer"
                 and r.get("relax_energy_eV") is not None]
@@ -114,8 +114,8 @@ monomer_rows = [r for r in rows if r["structure"] == "monomer"
 if monomer_rows:
     ref_row = min(monomer_rows, key=lambda r: r["relax_energy_eV"])
     ref_E   = ref_row["relax_energy_eV"]
-    print(f"\n  ΔE relative to lowest monomer ({ref_row['formula']}, E={ref_E:.4f} eV):")
+    print(f"\n  DeltaE relative to lowest monomer ({ref_row['formula']}, E={ref_E:.4f} eV):")
     for r in sorted(monomer_rows, key=lambda r: r["relax_energy_eV"])[:5]:
         dE = r["relax_energy_eV"] - ref_E
-        print(f"    {r['formula']:20s}  ΔE = {dE:+.4f} eV"
+        print(f"    {r['formula']:20s}  DeltaE = {dE:+.4f} eV"
               f"  {r.get('bond_status','?')}")

@@ -1,5 +1,5 @@
 """
-Tutorial 01 — Building your first complex and relaxing it with MACE
+Tutorial 01 -- Building your first complex and relaxing it with MACE
 ===================================================================
 
 This tutorial walks through:
@@ -22,38 +22,38 @@ Run this script with:
 from molbuilder.api import build, poscar, info
 from molbuilder.relaxation import relax, thermochemistry
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# -- Configuration -------------------------------------------------------------
 #
 # Point this to your local MACE checkpoint.
-# None → downloads mh-1 from the internet on first use (not suitable for
+# None -> downloads mh-1 from the internet on first use (not suitable for
 #        offline clusters or custom fine-tuned models).
 #
 MACE_MODEL  = None          # e.g. "/scratch/models/mace-mh-1.model"
 MACE_DEVICE = "cpu"         # "cuda" for GPU nodes
 
 
-# ── 1. Build the complex ──────────────────────────────────────────────────────
+# -- 1. Build the complex ------------------------------------------------------
 
 mol = build("Ni", ox=2, ligands=["H2O"] * 6)
 
 print("Structure summary:")
 info(mol)
-# → formula, charge, spin, coordination geometry, atom list
+# -> formula, charge, spin, coordination geometry, atom list
 
 # Write the initial (pre-relaxation) POSCAR
 poscar(mol, "Ni_H2O6_initial.POSCAR")
 print("Wrote Ni_H2O6_initial.POSCAR")
 
 
-# ── 2. Relax with MACE ────────────────────────────────────────────────────────
+# -- 2. Relax with MACE --------------------------------------------------------
 
 print("\nRelaxing with MACE ...")
 result = relax(
     mol,
     backend = "mace",
-    model   = MACE_MODEL,   # ← your local path goes here
+    model   = MACE_MODEL,   # <- your local path goes here
     device  = MACE_DEVICE,
-    fmax    = 0.05,          # convergence threshold in eV/Å
+    fmax    = 0.05,          # convergence threshold in eV/Angstrom
     steps   = 300,
 )
 
@@ -67,9 +67,9 @@ poscar(result.mol, "Ni_H2O6_relaxed.POSCAR")
 print("Wrote Ni_H2O6_relaxed.POSCAR")
 
 
-# ── 3. Full thermochemistry (optional, slower) ────────────────────────────────
+# -- 3. Full thermochemistry (optional, slower) --------------------------------
 #
-# Uncomment to also compute vibrational frequencies and ΔG(T,P).
+# Uncomment to also compute vibrational frequencies and DeltaG(T,P).
 
 # thermo = thermochemistry(
 #     mol,

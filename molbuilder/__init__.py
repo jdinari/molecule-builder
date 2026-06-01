@@ -1,4 +1,4 @@
-"""molbuilder – transition metal complex builder → POSCAR / XYZ (VASP)"""
+"""molbuilder - transition metal complex builder -> POSCAR / XYZ (VASP)"""
 
 __version__ = "2.1.0"
 

@@ -8,8 +8,8 @@ Each test asserts:
   - charge
   - spin multiplicity
   - atom count
-  - Ni-Ni distances (within 0.01 Å)
-  - minimum O-O distance above hard clash threshold (1.976 Å)
+  - Ni-Ni distances (within 0.01 Angstrom)
+  - minimum O-O distance above hard clash threshold (1.976 Angstrom)
   - no geometry warnings from check_structure()
 
 These are the structures whose correctness was confirmed during development.
@@ -23,7 +23,7 @@ from molbuilder import build, dimer, trimer
 from molbuilder.api import check_structure
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# -- helpers -------------------------------------------------------------------
 
 def metal_positions(mol, symbol=None):
     sym = symbol or mol.metal_symbol
@@ -52,16 +52,16 @@ def min_oo_distance(mol):
     return min_d
 
 
-HARD_OO_THRESHOLD = 1.976   # Å — from validation.py vdW sum × 0.65
+HARD_OO_THRESHOLD = 1.976   # Angstrom -- from validation.py vdW sum x 0.65
 
 
-# ── Ni₃(μ-HCOO)₆ triangular — manually verified ──────────────────────────────
+# -- Ni3(mu-HCOO)6 triangular -- manually verified ------------------------------
 
 class TestNi3HCOO6Triangular:
     """
-    The triangular Ni₃ trimer with 2 syn-syn formate bridges per edge.
+    The triangular Ni3 trimer with 2 syn-syn formate bridges per edge.
     This was the structure the user built by hand and verified.
-    α = 35° tilt scheme was derived analytically to ensure min O···O ≥ 2.20 Å.
+    alpha = 35deg tilt scheme was derived analytically to ensure min O***O >= 2.20 Angstrom.
     """
 
     @pytest.fixture(autouse=True)
@@ -88,23 +88,23 @@ class TestNi3HCOO6Triangular:
         assert len(metal_positions(self.mol)) == 3
 
     def test_equilateral_triangle(self):
-        """All three Ni-Ni distances should be equal to within 0.001 Å."""
+        """All three Ni-Ni distances should be equal to within 0.001 Angstrom."""
         dists = metal_metal_distances(self.mol)
         assert len(dists) == 3
         assert abs(dists[0] - dists[1]) < 0.001
         assert abs(dists[1] - dists[2]) < 0.001
 
     def test_ni_ni_distance(self):
-        """Ni-Ni should be ~3.568 Å (from mxm_angle=120°, Ni-O bl=2.06 Å)."""
+        """Ni-Ni should be ~3.568 Angstrom (from mxm_angle=120deg, Ni-O bl=2.06 Angstrom)."""
         d = metal_metal_distances(self.mol)[0]
         assert abs(d - 3.568) < 0.01
 
     def test_min_oo_above_threshold(self):
-        """No O···O clash: all O-O distances must exceed the hard limit."""
+        """No O***O clash: all O-O distances must exceed the hard limit."""
         assert min_oo_distance(self.mol) >= HARD_OO_THRESHOLD
 
     def test_min_oo_value(self):
-        """The tilt scheme achieves min O-O ≈ 2.20 Å."""
+        """The tilt scheme achieves min O-O ~= 2.20 Angstrom."""
         assert min_oo_distance(self.mol) >= 2.18
 
     def test_no_geometry_warnings(self):
@@ -129,7 +129,7 @@ class TestNi3HCOO6Triangular:
         )
 
 
-# ── Ni₂(μ-HCOO)₄ paddle-wheel ────────────────────────────────────────────────
+# -- Ni2(mu-HCOO)4 paddle-wheel ------------------------------------------------
 
 class TestNi2HCOO4PaddleWheel:
     """
@@ -154,7 +154,7 @@ class TestNi2HCOO4PaddleWheel:
         assert len(metal_positions(self.mol)) == 2
 
     def test_ni_ni_distance(self):
-        """Ni-Ni ≈ 3.98 Å for 4 syn-syn formate bridges."""
+        """Ni-Ni ~= 3.98 Angstrom for 4 syn-syn formate bridges."""
         d = metal_metal_distances(self.mol)[0]
         assert abs(d - 3.9796) < 0.05
 
@@ -166,12 +166,12 @@ class TestNi2HCOO4PaddleWheel:
         assert c_count == 4
 
 
-# ── Ni₃(μ-OH)₆ triangular ────────────────────────────────────────────────────
+# -- Ni3(mu-OH)6 triangular ----------------------------------------------------
 
 class TestNi3OH6Triangular:
     """
-    Triangular Ni₃ with 2 hydroxide bridges per edge.
-    α = 70° tilt (larger than formate because OH is a single-atom bridge).
+    Triangular Ni3 with 2 hydroxide bridges per edge.
+    alpha = 70deg tilt (larger than formate because OH is a single-atom bridge).
     """
 
     @pytest.fixture(autouse=True)
@@ -202,7 +202,7 @@ class TestNi3OH6Triangular:
         assert abs(dists[0] - dists[-1]) < 0.01
 
 
-# ── Ni₂(μ-HCOO)₄(H₂O)₂ symmetric ───────────────────────────────────────────
+# -- Ni2(mu-HCOO)4(H2O)2 symmetric -------------------------------------------
 
 class TestNi2HCOO4H2O2Symmetric:
     """Paddle-wheel with one water per metal (symmetric)."""
@@ -224,7 +224,7 @@ class TestNi2HCOO4H2O2Symmetric:
         assert check_structure(self.mol) == []
 
 
-# ── Ni₂(μ-HCOO)₄(H₂O) heteroleptic ─────────────────────────────────────────
+# -- Ni2(mu-HCOO)4(H2O) heteroleptic -----------------------------------------
 
 class TestNi2HCOO4H2OHeteroleptic:
     """
@@ -273,7 +273,7 @@ class TestNi2HCOO4H2OHeteroleptic:
         assert self.mol.num_atoms() != sym.num_atoms()
 
 
-# ── Bond lengths ──────────────────────────────────────────────────────────────
+# -- Bond lengths --------------------------------------------------------------
 
 class TestBondLengths:
     """Spot-checks that CSD-averaged bond lengths are physically reasonable."""
@@ -294,7 +294,7 @@ class TestBondLengths:
         assert bl > 0
 
     def test_ni_o_in_built_structure(self):
-        """All Ni-O bonds in an octahedral Ni(H2O)6 should be ~2.06 Å."""
+        """All Ni-O bonds in an octahedral Ni(H2O)6 should be ~2.06 Angstrom."""
         mol = build("Ni", ox=2, ligands=["H2O"] * 6)
         ni_pos = metal_positions(mol)[0]
         o_dists = [
@@ -305,7 +305,7 @@ class TestBondLengths:
             assert 1.9 < d < 2.3, f"Unexpected Ni-O distance: {d:.3f}"
 
 
-# ── Heteroleptic trimer ───────────────────────────────────────────────────────
+# -- Heteroleptic trimer -------------------------------------------------------
 
 class TestNi3HCOO6H2OHeteroleptic:
     """Ni3(mu-HCOO)6 + H2O on one Ni only (the specific case the user requested)."""
@@ -354,7 +354,7 @@ class TestNi3HCOO6H2OHeteroleptic:
         assert mol2.formula == self.mol.formula
 
 
-# ── Bidentate placement fixes ─────────────────────────────────────────────────
+# -- Bidentate placement fixes -------------------------------------------------
 
 class TestBidentatePlacement:
     """Verify the bidentate fan-direction optimizer produces clash-free structures."""
@@ -385,7 +385,7 @@ class TestBidentatePlacement:
         assert check_structure(mol) == []
 
 
-# ── Monomer validation filter ─────────────────────────────────────────────────
+# -- Monomer validation filter -------------------------------------------------
 
 class TestMonomersAllValid:
     """Every structure yielded by enumerate_monomers must pass hard validation."""

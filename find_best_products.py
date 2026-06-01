@@ -1,24 +1,24 @@
 """
 find_best_products.py
 =====================
-Direct ΔG ranking of Ni(II) coordination complexes — no reaction network needed.
+Direct DeltaG ranking of Ni(II) coordination complexes -- no reaction network needed.
 
 Instead of building a full reaction network, this script:
 
   1. Enumerates every Ni(II) complex from your ligand pool.
-  2. Relaxes each one with xTB and computes ΔG(T,P).
-  3. Computes ΔG_form relative to free metal + free ligands (isodesmic
-     references: HCOOH, H₂O, H₂ as neutral gas-phase species).
-  4. Ranks all structures by ΔG_form and prints the best products.
+  2. Relaxes each one with xTB and computes DeltaG(T,P).
+  3. Computes DeltaG_form relative to free metal + free ligands (isodesmic
+     references: HCOOH, H2O, H2 as neutral gas-phase species).
+  4. Ranks all structures by DeltaG_form and prints the best products.
   5. Optionally saves a bar-chart of the top-N and a CSV.
 
 This answers "which complexes are thermodynamically most stable?" directly
 without building or plotting a reaction network.
 
 The formation reaction used is:
-    Ni²⁺(aq)  +  ligand_pool  →  [Ni(ligands)]  +  displaced_refs
+    Ni2+(aq)  +  ligand_pool  ->  [Ni(ligands)]  +  displaced_refs
 
-Because all species are neutral and isodesmic, the xTB ΔG is reliable at the
+Because all species are neutral and isodesmic, the xTB DeltaG is reliable at the
 gas-phase level.  For more quantitative results use COMPUTE_THERMO=True.
 
 Usage
@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from molbuilder import enumerate_complexes, MULTI_BRIDGE_CASES
 
-# ── Chemistry ─────────────────────────────────────────────────────────────────
+# -- Chemistry -----------------------------------------------------------------
 METAL        = "Ni"
 OX_STATES    = [2]
 LIGAND_POOL  = ["HCOO", "H2O", "OH"]
@@ -48,22 +48,22 @@ BRIDGE_POOL  = ["mu-OH", "mu-HCOO"]
 NUCLEARITY   = [1, 2]          # 1 = monomers only; [1,2] = monomers + dimers
 CN_RANGE     = (4, 6)
 
-# ── Energetics ────────────────────────────────────────────────────────────────
-COMPUTE_ENERGY  = True         # set False to just enumerate (no ΔG)
+# -- Energetics ----------------------------------------------------------------
+COMPUTE_ENERGY  = True         # set False to just enumerate (no DeltaG)
 ENERGY_BACKEND  = "xtb+mace"   # "xtb", "mace", or "xtb+mace" (recommended hybrid)
-COMPUTE_THERMO  = True         # True → ΔG(T,P);  False → ΔE only (faster)
+COMPUTE_THERMO  = True         # True -> DeltaG(T,P);  False -> DeltaE only (faster)
 TEMPERATURE_K   = 298.15
 PRESSURE_PA     = 101325.0
 RELAX_FMAX      = 0.05
 RELAX_STEPS     = 300
 
-# ── Output ────────────────────────────────────────────────────────────────────
+# -- Output --------------------------------------------------------------------
 OUTPUT_DIR  = Path("poscar")
 CSV_OUT     = Path("best_products.csv")
 PLOT_OUT    = Path("best_products.png")
 TOP_N       = 20               # how many complexes to show in the bar chart
 
-# ── Reference molecule geometries (inline — no network dependency) ────────────
+# -- Reference molecule geometries (inline -- no network dependency) ------------
 
 import numpy as np
 from molbuilder.core.molecule import Molecule, Atom
@@ -102,11 +102,11 @@ def _make_ref(name: str) -> Molecule:
 
 
 # Neutral acid references for each anionic ligand
-# HCOO⁻ → HCOOH;  OH⁻ → H2O
+# HCOO- -> HCOOH;  OH- -> H2O
 _REF_FOR_LIGAND = {
-    "H2O":   ("H2O",   1),    # neutral  → 1 H2O consumed
-    "HCOO":  ("HCOOH", 1),    # -1 charge → HCOOH consumed, H2O produced
-    "OH":    ("H2O",   1),    # -1 charge → H2O consumed
+    "H2O":   ("H2O",   1),    # neutral  -> 1 H2O consumed
+    "HCOO":  ("HCOOH", 1),    # -1 charge -> HCOOH consumed, H2O produced
+    "OH":    ("H2O",   1),    # -1 charge -> H2O consumed
     "HCOOH": ("HCOOH", 1),
 }
 
@@ -126,7 +126,7 @@ def _compute_ref_energies(backend: str, compute_thermo: bool,
     results = {}
     for name in ("H2O", "HCOOH", "H2"):
         mol = _make_ref(name)
-        print(f"  Reference {name:8s} … ", end="", flush=True)
+        print(f"  Reference {name:8s} ... ", end="", flush=True)
         try:
             if eff == "xtb+mace":
                 if compute_thermo:
@@ -165,21 +165,21 @@ def _compute_ref_energies(backend: str, compute_thermo: bool,
 def _formation_dg(row: dict, complex_val: float,
                   ref_vals: dict, key: str) -> float | None:
     """
-    Compute ΔG_form for one complex (isodesmic, ligand-exchange reference).
+    Compute DeltaG_form for one complex (isodesmic, ligand-exchange reference).
 
-    Formation reaction example for [Ni(HCOO)₂(H₂O)₂]:
-        2 HCOOH  +  2 H₂O  →  [Ni(HCOO)₂(H₂O)₂]  +  2 H₂O   (net: +2 HCOOH consumed)
+    Formation reaction example for [Ni(HCOO)2(H2O)2]:
+        2 HCOOH  +  2 H2O  ->  [Ni(HCOO)2(H2O)2]  +  2 H2O   (net: +2 HCOOH consumed)
 
     Here we use the convention:
-        ΔG_form = G(complex) − Σ G(ref_in)
+        DeltaG_form = G(complex) - Sum G(ref_in)
     where ref_in is one reference molecule per coordinated anionic ligand.
-    Neutral ligands (H₂O, HCOOH) contribute their own G directly.
+    Neutral ligands (H2O, HCOOH) contribute their own G directly.
     """
     from collections import Counter
     import re
 
     combo = row.get("ligand_combo", "")
-    # Parse e.g. "HCOO2_H2O2_OH1" → Counter
+    # Parse e.g. "HCOO2_H2O2_OH1" -> Counter
     counts: Counter = Counter()
     for part in combo.split("_"):
         if not part:
@@ -215,7 +215,7 @@ def _make_label(row: dict) -> str:
     return "  ".join(p for p in parts if p)
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# -- Main ----------------------------------------------------------------------
 
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(exist_ok=True)
@@ -236,18 +236,18 @@ if __name__ == "__main__":
 
     if not COMPUTE_ENERGY:
         # Just print the inventory and exit
-        print("\nCOMPUTE_ENERGY=False — listing structures only:\n")
+        print("\nCOMPUTE_ENERGY=False -- listing structures only:\n")
         for i, (mol, row) in enumerate(mols_and_rows, 1):
             print(f"  {i:4d}.  {_make_label(row)}")
         sys.exit(0)
 
     # 2. Compute reference molecule energies first
     print("\n" + "=" * 60)
-    print("Step 2: Compute reference molecule energies (HCOOH, H₂O, H₂)")
+    print("Step 2: Compute reference molecule energies (HCOOH, H2O, H2)")
     print("=" * 60)
-    MACE_MODEL  = None   # None → mh-1; set to path for custom model
+    MACE_MODEL  = None   # None -> mh-1; set to path for custom model
     MACE_DEVICE = "cpu"  # "cpu" or "cuda"
-    XTB_MODEL   = None   # None → GFN2-xTB
+    XTB_MODEL   = None   # None -> GFN2-xTB
     try:
         ref_vals = _compute_ref_energies(
             backend=ENERGY_BACKEND, compute_thermo=COMPUTE_THERMO,
@@ -256,7 +256,7 @@ if __name__ == "__main__":
             mace_model=MACE_MODEL, mace_device=MACE_DEVICE, xtb_model=XTB_MODEL,
         )
     except ImportError:
-        print("  ✗ xTB not installed — pip install tblite ase")
+        print("  FAIL xTB not installed -- pip install tblite ase")
         sys.exit(1)
 
     # 3. Relax / thermochem each complex
@@ -268,7 +268,7 @@ if __name__ == "__main__":
                                            check_bonds_intact,
                                            xtb_relax_mace_singlepoint)
     except ImportError:
-        print("  ✗ pip install tblite ase  (+ mace-torch for xtb+mace)")
+        print("  FAIL pip install tblite ase  (+ mace-torch for xtb+mace)")
         sys.exit(1)
 
     _eff = ENERGY_BACKEND.lower()
@@ -277,7 +277,7 @@ if __name__ == "__main__":
     n_total = len(mols_and_rows)
     for idx, (mol, row) in enumerate(mols_and_rows, 1):
         label = _make_label(row)
-        print(f"  [{idx}/{n_total}] {label[:55]:<55s} … ", end="", flush=True)
+        print(f"  [{idx}/{n_total}] {label[:55]:<55s} ... ", end="", flush=True)
         r = dict(row)
         r["label"] = label
         try:
@@ -316,7 +316,7 @@ if __name__ == "__main__":
             r["bond_status"]       = "BROKEN" if not bc["intact"] else "OK"
             r["bond_max_elongation"] = bc["max_elongation"]
             r["bond_n_broken"]     = len(bc["broken_bonds"])
-            bs_tag = "  ⚠ BROKEN" if not bc["intact"] else ""
+            bs_tag = "  ! BROKEN" if not bc["intact"] else ""
             print(tag + bs_tag)
         except Exception as exc:
             r["energy_eV"] = None
@@ -325,7 +325,7 @@ if __name__ == "__main__":
             print(f"FAILED: {exc}")
         results.append(r)
 
-    # 4. Compute ΔG_form and rank
+    # 4. Compute DeltaG_form and rank
     key = "gibbs_eV" if COMPUTE_THERMO else "energy_eV"
     for r in results:
         r["dg_form_eV"] = _formation_dg(r, r.get(key), ref_vals, key)
@@ -336,7 +336,7 @@ if __name__ == "__main__":
     )
     failed = [r for r in results if r.get("dg_form_eV") is None]
 
-    label_col = "ΔG_form (eV)" if COMPUTE_THERMO else "ΔE_form (eV)"
+    label_col = "DeltaG_form (eV)" if COMPUTE_THERMO else "DeltaE_form (eV)"
     print("\n" + "=" * 60)
     print(f"Step 4: Best products ranked by {label_col}")
     print("=" * 60)
@@ -344,12 +344,12 @@ if __name__ == "__main__":
     print("  " + "-" * 56)
     for i, r in enumerate(ranked[:TOP_N], 1):
         val = r["dg_form_eV"]
-        bs  = "⚠ " if r.get("bond_status") == "BROKEN" else "  "
+        bs  = "! " if r.get("bond_status") == "BROKEN" else "  "
         print(f"  {i:4d}  {val:>+14.4f}  {bs}{r['label']}")
     if len(ranked) > TOP_N:
-        print(f"  … and {len(ranked)-TOP_N} more (see CSV)")
+        print(f"  ... and {len(ranked)-TOP_N} more (see CSV)")
     if failed:
-        print(f"\n  ⚠ {len(failed)} structure(s) failed energy computation.")
+        print(f"\n  ! {len(failed)} structure(s) failed energy computation.")
 
     # 5. Save CSV
     try:
@@ -359,7 +359,7 @@ if __name__ == "__main__":
              "energy_eV", "gibbs_eV", "dg_form_eV", "bond_status"]
         ].sort_values("dg_form_eV")
         df.to_csv(CSV_OUT, index=False)
-        print(f"\n  CSV → {CSV_OUT}  ({len(df)} rows)")
+        print(f"\n  CSV -> {CSV_OUT}  ({len(df)} rows)")
     except ImportError:
         pass
 
@@ -390,18 +390,18 @@ if __name__ == "__main__":
 
         import matplotlib.patches as mpatches
         legend_handles = [
-            mpatches.Patch(color="#2E7D32", label="ΔG < 0  (thermodynamically favoured)"),
-            mpatches.Patch(color="#1565C0", label="ΔG ≥ 0"),
-            mpatches.Patch(color="#C62828", label="BROKEN bond — exclude from DFT"),
+            mpatches.Patch(color="#2E7D32", label="DeltaG < 0  (thermodynamically favoured)"),
+            mpatches.Patch(color="#1565C0", label="DeltaG >= 0"),
+            mpatches.Patch(color="#C62828", label="BROKEN bond -- exclude from DFT"),
         ]
         ax.legend(handles=legend_handles, fontsize=8, loc="upper left")
         plt.tight_layout()
         fig.savefig(PLOT_OUT, dpi=150, bbox_inches="tight")
         plt.close(fig)
-        print(f"  Plot → {PLOT_OUT}")
+        print(f"  Plot -> {PLOT_OUT}")
     except Exception as exc:
         print(f"  (plot skipped: {exc})")
 
     print()
-    print("Done.  The most negative ΔG_form values are your best candidate products.")
+    print("Done.  The most negative DeltaG_form values are your best candidate products.")
     print("Structures with BROKEN bonds should be reviewed before DFT submission.")

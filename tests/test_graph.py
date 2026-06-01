@@ -1,13 +1,13 @@
 """
 tests/test_graph.py
 ===================
-Tests for molbuilder.graph — canonical hashing and deduplication.
+Tests for molbuilder.graph -- canonical hashing and deduplication.
 
 The key correctness properties:
-    1. Rotations / reflections → SAME hash
-    2. tet vs sqp (same formula, different geometry) → DIFFERENT hash
-    3. cis vs trans (same geometry, different isomer) → DIFFERENT hash
-    4. Different ligand sets → DIFFERENT hash
+    1. Rotations / reflections -> SAME hash
+    2. tet vs sqp (same formula, different geometry) -> DIFFERENT hash
+    3. cis vs trans (same geometry, different isomer) -> DIFFERENT hash
+    4. Different ligand sets -> DIFFERENT hash
     5. deduplicate() removes exact copies, keeps distinct structures
 """
 
@@ -22,7 +22,7 @@ from molbuilder.graph import (
 )
 
 
-# ── fixtures ──────────────────────────────────────────────────────────────────
+# -- fixtures ------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
 def ni_hcoo2_h2o4_isomers():
@@ -69,7 +69,7 @@ def _dummy_row(mol, geom="oct", cn=6, label="only"):
             "filename": "/tmp/dummy.POSCAR"}
 
 
-# ── _infer_bonds ──────────────────────────────────────────────────────────────
+# -- _infer_bonds --------------------------------------------------------------
 
 class TestInferBonds:
     def test_water_has_two_oh_bonds(self):
@@ -94,7 +94,7 @@ class TestInferBonds:
         assert all(i != j for i,j in bonds)
 
 
-# ── _donor_angle_label ────────────────────────────────────────────────────────
+# -- _donor_angle_label --------------------------------------------------------
 
 class TestDonorAngleLabel:
     def test_90_is_adj(self):   assert _donor_angle_label(90.0)  == "adj"
@@ -107,7 +107,7 @@ class TestDonorAngleLabel:
         assert _donor_angle_label(120.0) == "trans"
 
 
-# ── MolGraph ──────────────────────────────────────────────────────────────────
+# -- MolGraph ------------------------------------------------------------------
 
 class TestMolGraph:
     def test_builds_without_error(self, ni_hcoo2_h2o4_isomers):
@@ -140,7 +140,7 @@ class TestMolGraph:
     def test_neq(self, ni_hcoo2_h2o4_isomers):
         g1 = MolGraph(ni_hcoo2_h2o4_isomers[0])
         g2 = MolGraph(ni_hcoo2_h2o4_isomers[1])
-        # cis ≠ trans
+        # cis != trans
         assert g1 != g2
 
     def test_hashable(self, ni_hcoo2_h2o4_isomers):
@@ -154,7 +154,7 @@ class TestMolGraph:
         assert "n_bonds" in r
 
 
-# ── canonical_hash ────────────────────────────────────────────────────────────
+# -- canonical_hash ------------------------------------------------------------
 
 class TestCanonicalHash:
 
@@ -164,7 +164,7 @@ class TestCanonicalHash:
         h1 = canonical_hash(mol)
         for deg in [30, 47, 90, 137, 180]:
             h2 = canonical_hash(_rotate(mol, deg))
-            assert h1 == h2, f"Rotation by {deg}° gave different hash"
+            assert h1 == h2, f"Rotation by {deg}deg gave different hash"
 
     def test_reflection_gives_same_hash(self, ni_hcoo2_h2o4_isomers):
         """Mirror image should have the same graph hash."""
@@ -243,7 +243,7 @@ class TestCanonicalHash:
         {h: "test"}   # should not raise
 
 
-# ── deduplicate ───────────────────────────────────────────────────────────────
+# -- deduplicate ---------------------------------------------------------------
 
 class TestDeduplicate:
 
@@ -363,7 +363,7 @@ class TestDeduplicate:
         assert "dup" in out
 
 
-# ── DeduplicationResult ───────────────────────────────────────────────────────
+# -- DeduplicationResult -------------------------------------------------------
 
 class TestDeduplicationResult:
     @pytest.fixture

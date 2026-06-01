@@ -18,14 +18,14 @@ from molbuilder.combinatorics import (
 )
 
 
-# ── helper ────────────────────────────────────────────────────────────────────
+# -- helper --------------------------------------------------------------------
 
 def collect(gen):
     """Consume a generator, return list of row dicts."""
     return [row for _, row in gen]
 
 
-# ── combo_label / safe ────────────────────────────────────────────────────────
+# -- combo_label / safe --------------------------------------------------------
 
 class TestHelpers:
     def test_combo_label_sorted(self):
@@ -41,7 +41,7 @@ class TestHelpers:
         assert "/" not in safe("a/b")
 
 
-# ── MULTI_BRIDGE_CASES ────────────────────────────────────────────────────────
+# -- MULTI_BRIDGE_CASES --------------------------------------------------------
 
 class TestMultiBridgeCases:
     def test_is_list(self):
@@ -74,7 +74,7 @@ class TestMultiBridgeCases:
                 f"Case {arr} {nbpp}x{bridge} not charge-neutral: {net}"
 
 
-# ── enumerate_monomers ────────────────────────────────────────────────────────
+# -- enumerate_monomers --------------------------------------------------------
 
 class TestEnumerateMonomers:
     def test_yields_tuples(self):
@@ -101,7 +101,7 @@ class TestEnumerateMonomers:
             assert r["structure"] == "monomer"
 
 
-# ── enumerate_dimers ──────────────────────────────────────────────────────────
+# -- enumerate_dimers ----------------------------------------------------------
 
 class TestEnumerateDimers:
     def test_yields_dimers(self):
@@ -139,7 +139,7 @@ class TestEnumerateDimers:
         assert "C4H4Ni2O8" not in formulas
 
 
-# ── enumerate_trimers ─────────────────────────────────────────────────────────
+# -- enumerate_trimers ---------------------------------------------------------
 
 class TestEnumerateTrimers:
     def test_triangular_double_bridge_hcoo(self):
@@ -169,7 +169,7 @@ class TestEnumerateTrimers:
             assert r["charge"] == 0
 
 
-# ── enumerate_heteroleptic_dimers ─────────────────────────────────────────────
+# -- enumerate_heteroleptic_dimers ---------------------------------------------
 
 class TestEnumerateHeterolepticDimers:
     def test_yields_results(self):
@@ -219,7 +219,7 @@ class TestEnumerateHeterolepticDimers:
             seen.add(key)
 
 
-# ── enumerate_complexes ───────────────────────────────────────────────────────
+# -- enumerate_complexes -------------------------------------------------------
 
 class TestEnumerateComplexes:
     def test_monomers_only(self):

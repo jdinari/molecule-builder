@@ -10,7 +10,7 @@ does the rest.
 
 Public API
 ----------
-    enumerate_complexes(metal, ...)   → iterator of (Molecule, metadata-dict)
+    enumerate_complexes(metal, ...)   -> iterator of (Molecule, metadata-dict)
 
 The iterator yields every geometrically valid, charge-neutral complex across
 the requested nuclearity (monomer / dimer / trimer) without any metal-specific
@@ -48,7 +48,7 @@ def _passes_hard_validation(mol) -> bool:
 from molbuilder.core.geometry import infer_geometry
 from molbuilder.ligands.library import get_ligand
 
-# ── ligand metadata helpers ───────────────────────────────────────────────────
+# -- ligand metadata helpers ---------------------------------------------------
 
 def _ligand_charge(name: str) -> int:
     try:
@@ -64,7 +64,7 @@ def _ligand_cn(name: str) -> int:
         return 1
 
 
-# ── geometry helpers ──────────────────────────────────────────────────────────
+# -- geometry helpers ----------------------------------------------------------
 
 _DEFAULT_GEOM_FOR_CN: Dict[int, str] = {
     3: "tp", 4: "tet", 5: "sqpy", 6: "oct", 7: "pbp",
@@ -82,7 +82,7 @@ def _geometries_for_cn(cn: int,
     return base + extra.get(cn, [])
 
 
-# ── label helpers ─────────────────────────────────────────────────────────────
+# -- label helpers -------------------------------------------------------------
 
 def combo_label(ligands: Sequence[str]) -> str:
     c = Counter(ligands)
@@ -98,7 +98,7 @@ def _ox_label(metal: str, ox: int) -> str:
     return f"{metal}{roman.get(ox, str(ox))}"
 
 
-# ── result row ────────────────────────────────────────────────────────────────
+# -- result row ----------------------------------------------------------------
 
 def _make_row(mol, structure_type, metal, ox, cn, geom,
               lig_combo, bridge, n_bridges, arrangement, isomer_label,
@@ -122,40 +122,40 @@ def _make_row(mol, structure_type, metal, ox, cn, geom,
     }
 
 
-# ── bridge pairs per topology ──────────────────────────────────────────────────
+# -- bridge pairs per topology --------------------------------------------------
 
 _BRIDGE_PAIRS = {"linear": 2, "triangular": 3}
 
 
-# ── MULTI_BRIDGE_CASES ────────────────────────────────────────────────────────
+# -- MULTI_BRIDGE_CASES --------------------------------------------------------
 # Each entry: (arrangement, n_bridges_per_pair, bridge, ox, terminal, label_suffix)
 #
 # Inclusion criteria
 # ------------------
 # 1. Charge-neutral: 3*ox + 3*tc + n_bridge_pairs*nbpp*bridge_charge == 0
-# 2. Geometrically valid: the coordinated ±α tilt scheme in trimer() keeps all
-#    inter-edge O···O distances above the hard clash threshold of 1.98 Å.
+# 2. Geometrically valid: the coordinated +/-alpha tilt scheme in trimer() keeps all
+#    inter-edge O***O distances above the hard clash threshold of 1.98 Angstrom.
 #
-# Bridge-type-aware tilt angles (α, encoded in api.py _TRIANGULAR_DOUBLE_BRIDGE_ALPHA):
-#   mu-HCOO : α ≈ 35°  →  min inter-edge O···O ≈ 2.20 Å  (O-C-O bar geometry)
-#   mu-OH   : α ≈ 70°  →  min inter-edge O···O ≈ 2.36 Å  (single-atom bridge)
+# Bridge-type-aware tilt angles (alpha, encoded in api.py _TRIANGULAR_DOUBLE_BRIDGE_ALPHA):
+#   mu-HCOO : alpha ~= 35deg  ->  min inter-edge O***O ~= 2.20 Angstrom  (O-C-O bar geometry)
+#   mu-OH   : alpha ~= 70deg  ->  min inter-edge O***O ~= 2.36 Angstrom  (single-atom bridge)
 #
 # Triangular nbpp=3 is EXCLUDED: packing 6 bridging donors per metal at
-# Ni-Ni ≈ 3.2–3.6 Å produces irreducible O···O ≈ 1.3 Å regardless of tilt angle.
+# Ni-Ni ~= 3.2-3.6 Angstrom produces irreducible O***O ~= 1.3 Angstrom regardless of tilt angle.
 
 MULTI_BRIDGE_CASES: List[Tuple] = [
     # (arrangement,   nbpp, bridge,     ox,  terminal,   suffix)
-    # ── linear, 3 bridges per pair, NiII ──────────────────────────────────────
+    # -- linear, 3 bridges per pair, NiII --------------------------------------
     ("linear",      3, "mu-OH",   2, [],         "triplebridge"),
     ("linear",      3, "mu-HCOO", 2, [],         "triplebridge"),
-    # ── triangular, 2 bridges per pair, NiII ──────────────────────────────────
-    # 3*Ni(II) + 3_pairs * 2_bridges * (-1) = 6 - 6 = 0 ✓   CN=4 per Ni (tet)
+    # -- triangular, 2 bridges per pair, NiII ----------------------------------
+    # 3*Ni(II) + 3_pairs * 2_bridges * (-1) = 6 - 6 = 0 OK   CN=4 per Ni (tet)
     ("triangular",  2, "mu-HCOO", 2, [],         "doublebridge"),
     ("triangular",  2, "mu-OH",   2, [],         "doublebridge"),
 ]
 
 
-# ── MONOMERS ──────────────────────────────────────────────────────────────────
+# -- MONOMERS ------------------------------------------------------------------
 
 def enumerate_monomers(
     metal: str,
@@ -188,7 +188,7 @@ def enumerate_monomers(
                                                  ligands=list(combo), geometry=geom)
                     except Exception as e:
                         if verbose:
-                            print(f"  ✗ monomer {oxl} CN{cn} {geom} {combo}: {e}")
+                            print(f"  FAIL monomer {oxl} CN{cn} {geom} {combo}: {e}")
                         continue
                     cl = combo_label(combo)
                     for mol in iso_list:
@@ -199,7 +199,7 @@ def enumerate_monomers(
                                         cl, None, 0, None, label, path)
                         v_result = _passes_hard_validation(mol)
                         if verbose:
-                            status = "✓" if v_result else "✗ (clash)"
+                            status = "OK" if v_result else "FAIL (clash)"
                             print(f"  {status} monomer {oxl} CN{cn} {geom:5s}  "
                                   f"{cl:35s}  {label:10s}  {mol.formula}")
                         if not v_result:
@@ -227,7 +227,7 @@ def enumerate_monomers(
                                 result = build(metal, ox=ox, ligands=full, geometry=geom)
                             except Exception as e:
                                 if verbose:
-                                    print(f"  ✗ monomer {oxl} CN{cn} {geom} {full}: {e}")
+                                    print(f"  FAIL monomer {oxl} CN{cn} {geom} {full}: {e}")
                                 continue
                             mols = result if isinstance(result, list) else [result]
                             cl = combo_label(full)
@@ -240,12 +240,12 @@ def enumerate_monomers(
                                 if not _passes_hard_validation(mol):
                                     continue
                                 if verbose:
-                                    print(f"  ✓ monomer {oxl} CN{cn} {geom:5s}  "
+                                    print(f"  OK monomer {oxl} CN{cn} {geom:5s}  "
                                           f"{cl:35s}  {label:10s}  {mol.formula}")
                                 yield mol, row
 
 
-# ── DIMERS ────────────────────────────────────────────────────────────────────
+# -- DIMERS --------------------------------------------------------------------
 
 def enumerate_dimers(
     metal: str,
@@ -303,7 +303,7 @@ def enumerate_dimers(
                         row = _make_row(mol, "dimer", metal, ox, cn, geom,
                                         cl, bridge, nb, None, "only", path)
                         if verbose:
-                            print(f"  ✓ dimer  {oxl} CN{cn}  {nb}x{bridge:10s}  "
+                            print(f"  OK dimer  {oxl} CN{cn}  {nb}x{bridge:10s}  "
                                   f"term={list(terminal)}  {mol.formula}")
                         yield mol, row
 
@@ -339,13 +339,13 @@ def enumerate_dimers(
                                 row = _make_row(mol, "dimer", metal, ox, cn, geom,
                                                 cl, bridge, nb, None, "only", path)
                                 if verbose:
-                                    print(f"  ✓ dimer  {oxl} CN{cn}  "
+                                    print(f"  OK dimer  {oxl} CN{cn}  "
                                           f"{nb}x{bridge:10s}  "
                                           f"term={terminal}  {mol.formula}")
                                 yield mol, row
 
 
-# ── HETEROLEPTIC DIMERS ───────────────────────────────────────────────────────
+# -- HETEROLEPTIC DIMERS -------------------------------------------------------
 
 def enumerate_heteroleptic_dimers(
     metal: str,
@@ -361,14 +361,14 @@ def enumerate_heteroleptic_dimers(
     verbose: bool = True,
 ) -> Iterator[Tuple[Any, Dict[str, Any]]]:
     """
-    Yield (Molecule, row_dict) for every charge-neutral *heteroleptic* dimer —
+    Yield (Molecule, row_dict) for every charge-neutral *heteroleptic* dimer --
     i.e. dimers where the two metal centres carry *different* terminal ligand sets.
 
     The symmetric (homotopic) cases are deliberately excluded here; they are
     already covered by enumerate_dimers().
 
     A pair (t_m1, t_m2) is considered distinct from (t_m2, t_m1) only if the
-    two multisets differ; the canonical form with t_m1 ≤ t_m2 (lexicographic on
+    two multisets differ; the canonical form with t_m1 <= t_m2 (lexicographic on
     sorted tuples) is generated once.  The POSCAR filename encodes both sides:
     ``<m1_combo>__<m2_combo>_<nb>x<bridge>.POSCAR``.
 
@@ -396,10 +396,10 @@ def enumerate_heteroleptic_dimers(
     bridge_charge = {b: _ligand_charge(b) for b in bridge_ligands}
     all_terminals = list(mono_ligands) + list(bi_ligands)
 
-    # Pre-build a dict: required_tc2 → list of (sorted_tuple, t2_list) combos.
+    # Pre-build a dict: required_tc2 -> list of (sorted_tuple, t2_list) combos.
     # This is built once per (ox, bridge, nb, n2) and reused across all t1.
     def _combos_by_charge(n: int) -> Dict[int, List[tuple]]:
-        """Map charge → list of sorted-tuple combos of length n."""
+        """Map charge -> list of sorted-tuple combos of length n."""
         result: Dict[int, List[tuple]] = {}
         for combo in (combinations_with_replacement(all_terminals, n)
                       if n > 0 else [()]):
@@ -416,10 +416,10 @@ def enumerate_heteroleptic_dimers(
             bc = bridge_charge[bridge]
             for nb in range(1, _max_b + 1):
                 # charge target: 2*ox + tc1 + tc2 + nb*bc = 0
-                # → tc1 + tc2 = -(2*ox + nb*bc)
+                # -> tc1 + tc2 = -(2*ox + nb*bc)
                 charge_target = -(2 * ox + nb * bc)
 
-                # Build charge→combos index for each valid n2 once
+                # Build charge->combos index for each valid n2 once
                 # n_max caps terminals per metal (None = no cap)
                 n_max = (cn_max - nb) if _max_t is None else min(cn_max - nb, _max_t)
 
@@ -487,14 +487,14 @@ def enumerate_heteroleptic_dimers(
                                                 f"{cl1}__{cl2}",
                                                 bridge, nb, None, "hetero", path)
                                 if verbose:
-                                    print(f"  ✓ dimer  {oxl} CN{cn1}/{cn2}  "
+                                    print(f"  OK dimer  {oxl} CN{cn1}/{cn2}  "
                                           f"{nb}x{bridge:10s}  "
                                           f"m1={t1_list}  m2={t2_list}  "
                                           f"{mol.formula}")
                                 yield mol, row
 
 
-# ── TRIMERS ───────────────────────────────────────────────────────────────────
+# -- TRIMERS -------------------------------------------------------------------
 
 def enumerate_trimers(
     metal: str,
@@ -551,7 +551,7 @@ def enumerate_trimers(
                         row = _make_row(mol, f"trimer_{arrangement}", metal, ox, cn,
                                         geom, cl, bridge, n_bp, arrangement, "only", path)
                         if verbose:
-                            print(f"  ✓ trimer {oxl} CN{cn}  {bridge:10s}  "
+                            print(f"  OK trimer {oxl} CN{cn}  {bridge:10s}  "
                                   f"term={list(terminal)}  "
                                   f"{arrangement:12s}  {mol.formula}")
                         yield mol, row
@@ -588,7 +588,7 @@ def enumerate_trimers(
                             row = _make_row(mol, f"trimer_{arrangement}", metal, ox, cn_bi,
                                             geom, cl, bridge, n_bp, arrangement, "only", path)
                             if verbose:
-                                print(f"  ✓ trimer {oxl} CN{cn_bi}  "
+                                print(f"  OK trimer {oxl} CN{cn_bi}  "
                                       f"{bridge:10s}  term={terminal_bi}  "
                                       f"{arrangement}  {mol.formula}")
                             yield mol, row
@@ -616,7 +616,7 @@ def enumerate_trimers(
                          n_bridges_per_pair=nbpp)
         except Exception as e:
             if verbose:
-                print(f"  ✗ trimer {oxl} {arr} {nbpp}x{bridge} "
+                print(f"  FAIL trimer {oxl} {arr} {nbpp}x{bridge} "
                       f"term={terminal}: {e}")
             continue
         if mol.charge != 0:
@@ -629,12 +629,12 @@ def enumerate_trimers(
         row  = _make_row(mol, f"trimer_{arr}", metal, ox, cn, geom,
                          cl, bridge, n_bp * nbpp, arr, "only", path)
         if verbose:
-            print(f"  ✓ trimer {oxl} CN{cn}  {nbpp}x{bridge:10s}  "
+            print(f"  OK trimer {oxl} CN{cn}  {nbpp}x{bridge:10s}  "
                   f"term={list(terminal)}  {arr:12s}  {mol.formula}")
         yield mol, row
 
 
-# ── HETEROLEPTIC TRIMERS ──────────────────────────────────────────────────────
+# -- HETEROLEPTIC TRIMERS ------------------------------------------------------
 
 def enumerate_heteroleptic_trimers(
     metal: str,
@@ -666,7 +666,7 @@ def enumerate_heteroleptic_trimers(
     ----------
     max_terminals_per_metal : int or None
         Cap on terminals per metal site (default 2). Controls the combinatorial
-        explosion: 1→fast, 2→~10s for the standard Ni pool, 3→slow.
+        explosion: 1->fast, 2->~10s for the standard Ni pool, 3->slow.
     """
     cn_min, cn_max = cn_range
     all_charges   = {l: _ligand_charge(l)
@@ -704,7 +704,7 @@ def enumerate_heteroleptic_trimers(
         # Base charge contributed by bridges
         bridge_charge_total = n_bp * nbpp * bc
         # We need: 3*ox + sum(tc_k for k in 0,1,2) + bridge_charge_total = 0
-        # → tc0 + tc1 + tc2 = -(3*ox + bridge_charge_total)
+        # -> tc0 + tc1 + tc2 = -(3*ox + bridge_charge_total)
         total_tc_needed = -(3 * ox + bridge_charge_total)
 
         # Max terminals per metal (CN constraint)
@@ -792,14 +792,14 @@ def enumerate_heteroleptic_trimers(
                                                         bridge, n_bp * nbpp,
                                                         arr, "hetero", path)
                                         if verbose:
-                                            print(f"  ✓ trimer {oxl} CN{cn_rep}  "
+                                            print(f"  OK trimer {oxl} CN{cn_rep}  "
                                                   f"{nbpp}x{bridge:10s}  "
                                                   f"m0={list(t0)} m1={list(t1)} m2={list(t2)}  "
                                                   f"{arr}  {mol.formula}")
                                         yield mol, row
 
 
-# ── top-level convenience ─────────────────────────────────────────────────────
+# -- top-level convenience -----------------------------------------------------
 
 def enumerate_complexes(
     metal: str,
@@ -834,7 +834,7 @@ def enumerate_complexes(
     cn_range                     : (min_CN, max_CN) inclusive, per metal centre.
     max_bridges_per_pair         : Upper limit on bridges per metal pair in dimers.
     multi_bridge_cases           : Override the default MULTI_BRIDGE_CASES table.
-    geometry_for_cn              : Override default CN → geometry mapping.
+    geometry_for_cn              : Override default CN -> geometry mapping.
     include_heteroleptic         : Enumerate heteroleptic dimers (different terminals
                                    on each metal). Disabled by default.
     include_heteroleptic_trimers : Enumerate heteroleptic trimers (different terminals
@@ -870,9 +870,9 @@ def enumerate_complexes(
         )
         if include_heteroleptic:
             if verbose:
-                print("\n" + "─" * 60)
-                print(f"  DIMERS – heteroleptic  ({metal})")
-                print("─" * 60)
+                print("\n" + "-" * 60)
+                print(f"  DIMERS - heteroleptic  ({metal})")
+                print("-" * 60)
             yield from enumerate_heteroleptic_dimers(
                 metal, ox_states, ligand_pool, list(bridge_pool), bi_ligands,
                 cn_range, max_bridges_per_pair, max_terminals_per_metal,
@@ -891,9 +891,9 @@ def enumerate_complexes(
         )
         if include_heteroleptic_trimers:
             if verbose:
-                print("\n" + "─" * 60)
-                print(f"  TRIMERS – heteroleptic  ({metal})")
-                print("─" * 60)
+                print("\n" + "-" * 60)
+                print(f"  TRIMERS - heteroleptic  ({metal})")
+                print("-" * 60)
             yield from enumerate_heteroleptic_trimers(
                 metal, ox_states, ligand_pool, list(bridge_pool), bi_ligands,
                 cn_range, list(arrangements), multi_bridge_cases,
@@ -901,7 +901,7 @@ def enumerate_complexes(
             )
 
 
-# ── internal path helper ──────────────────────────────────────────────────────
+# -- internal path helper ------------------------------------------------------
 
 def _poscar_path(output_root: Optional[Path],
                  structure_type: str,

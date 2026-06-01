@@ -1,5 +1,5 @@
 """
-cisplatin.py — cis and trans isomers of [PdCl2(NH3)2]
+cisplatin.py -- cis and trans isomers of [PdCl2(NH3)2]
 """
 from molbuilder.api import build, poscar
 

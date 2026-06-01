@@ -29,7 +29,7 @@ class TestGeometryVectors:
         self._assert_unit_vectors(get_geometry_vectors("oct"))
 
     def test_octahedral_mutual_angles(self):
-        """All oct vectors should be mutually 90° or 180°."""
+        """All oct vectors should be mutually 90deg or 180deg."""
         vecs = get_geometry_vectors("oct")
         for i in range(6):
             for j in range(i + 1, 6):
@@ -41,7 +41,7 @@ class TestGeometryVectors:
         assert len(get_geometry_vectors("tet")) == 4
 
     def test_tetrahedral_angles(self):
-        """All tet vectors should have cos(angle) ≈ -1/3 (109.47°)."""
+        """All tet vectors should have cos(angle) ~= -1/3 (109.47deg)."""
         vecs = get_geometry_vectors("tet")
         cos_tet = -1.0 / 3.0
         for i in range(4):

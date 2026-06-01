@@ -1,11 +1,11 @@
 """
-Tutorial 05 — Thermochemistry: ΔG for ligand substitution
+Tutorial 05 -- Thermochemistry: DeltaG for ligand substitution
 ==========================================================
 
 Computes Gibbs free energies for stepwise formate substitution at Ni(II):
 
-    Step 1:  [Ni(H2O)6]²⁺  +  HCOO⁻  →  [Ni(HCOO)(H2O)5]⁺  +  H2O
-    Step 2:  [Ni(HCOO)(H2O)5]⁺  +  HCOO⁻  →  [Ni(HCOO)2(H2O)4]  +  H2O
+    Step 1:  [Ni(H2O)6]2+  +  HCOO-  ->  [Ni(HCOO)(H2O)5]+  +  H2O
+    Step 2:  [Ni(HCOO)(H2O)5]+  +  HCOO-  ->  [Ni(HCOO)2(H2O)4]  +  H2O
 
 and compares the cis and trans isomers of the diforimate product.
 
@@ -26,7 +26,7 @@ from molbuilder.api import build
 from molbuilder.relaxation import thermochemistry
 from molbuilder.core.molecule import Molecule, Atom
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# -- Configuration -------------------------------------------------------------
 
 BACKEND     = "xtb"         # "xtb" (recommended) or "mace"
 MACE_MODEL  = None          # only used if BACKEND = "mace"
@@ -40,13 +40,13 @@ if BACKEND == "mace":
     BACKEND_KWARGS = {"model": MACE_MODEL, "device": MACE_DEVICE}
 
 
-# ── Free-molecule reference geometries ───────────────────────────────────────
+# -- Free-molecule reference geometries ---------------------------------------
 #
-# build() requires a metal centre, so free H2O and HCOO⁻ are built directly
+# build() requires a metal centre, so free H2O and HCOO- are built directly
 # from their experimental geometries.
 
 def make_h2o() -> Molecule:
-    """Free water molecule: O-H = 0.958 Å, H-O-H = 104.5°."""
+    """Free water molecule: O-H = 0.958 Angstrom, H-O-H = 104.5deg."""
     angle_half = np.radians(104.5 / 2)
     oh = 0.958
     return Molecule(
@@ -61,7 +61,7 @@ def make_h2o() -> Molecule:
 
 
 def make_formate() -> Molecule:
-    """Free formate anion (HCOO⁻): O-C-O = 126°, C-O = 1.25 Å, C-H = 1.09 Å."""
+    """Free formate anion (HCOO-): O-C-O = 126deg, C-O = 1.25 Angstrom, C-H = 1.09 Angstrom."""
     angle_half = np.radians(126.0 / 2)
     co, ch = 1.25, 1.09
     return Molecule(
@@ -76,7 +76,7 @@ def make_formate() -> Molecule:
     )
 
 
-# ── Build all species ─────────────────────────────────────────────────────────
+# -- Build all species ---------------------------------------------------------
 
 print("Building structures ...")
 
@@ -102,10 +102,10 @@ species = {k: v for k, v in species.items() if v is not None}
 print(f"  Species to compute: {list(species.keys())}")
 
 
-# ── Compute thermochemistry ───────────────────────────────────────────────────
+# -- Compute thermochemistry ---------------------------------------------------
 
 print(f"\nRunning thermochemistry (backend={BACKEND}, T={T} K, P={P} Pa) ...")
-print("Each species takes ~1–2 minutes (geometry relaxation + frequencies).\n")
+print("Each species takes ~1-2 minutes (geometry relaxation + frequencies).\n")
 
 results = {}
 for name, mol in species.items():
@@ -126,7 +126,7 @@ for name, mol in species.items():
         print(f"    FAILED: {exc}")
 
 
-# ── Isomer comparison: cis vs trans [Ni(HCOO)2(H2O)4] ────────────────────────
+# -- Isomer comparison: cis vs trans [Ni(HCOO)2(H2O)4] ------------------------
 
 print("\n" + "=" * 58)
 print("  Isomer comparison: cis vs trans [Ni(HCOO)2(H2O)4]")
@@ -138,24 +138,24 @@ r_trans = results.get("Ni_HCOO2_H2O4_trans")
 if r_cis and r_trans:
     dE = r_trans.energy_eV - r_cis.energy_eV
     dG = r_trans.gibbs_eV  - r_cis.gibbs_eV
-    print(f"  ΔE(trans − cis) = {dE:+.4f} eV  ({dE * 23.06:+.2f} kcal/mol)")
-    print(f"  ΔG(trans − cis) = {dG:+.4f} eV  ({dG * 23.06:+.2f} kcal/mol)")
+    print(f"  DeltaE(trans - cis) = {dE:+.4f} eV  ({dE * 23.06:+.2f} kcal/mol)")
+    print(f"  DeltaG(trans - cis) = {dG:+.4f} eV  ({dG * 23.06:+.2f} kcal/mol)")
     preferred = "trans" if dG < 0 else "cis"
-    print(f"\n  → {preferred} isomer is thermodynamically preferred at {T} K, {P/100:.0f} hPa")
+    print(f"\n  -> {preferred} isomer is thermodynamically preferred at {T} K, {P/100:.0f} hPa")
 
-    # Re-evaluate ΔG at other temperatures without re-running any calculations
-    print(f"\n  ΔG(trans − cis) at other temperatures (no re-run needed):")
+    # Re-evaluate DeltaG at other temperatures without re-running any calculations
+    print(f"\n  DeltaG(trans - cis) at other temperatures (no re-run needed):")
     for T2 in [250, 298.15, 350, 400]:
         dG2 = r_trans.gibbs_at(T=T2) - r_cis.gibbs_at(T=T2)
-        print(f"    T = {T2:6.1f} K  →  ΔG = {dG2:+.4f} eV")
+        print(f"    T = {T2:6.1f} K  ->  DeltaG = {dG2:+.4f} eV")
 else:
-    print("  (One or both isomers failed — check output above.)")
+    print("  (One or both isomers failed -- check output above.)")
 
 
-# ── Step 1: [Ni(H2O)6] + HCOO⁻ → [Ni(HCOO)(H2O)5] + H2O ───────────────────
+# -- Step 1: [Ni(H2O)6] + HCOO- -> [Ni(HCOO)(H2O)5] + H2O -------------------
 
 print("\n" + "=" * 58)
-print("  Step 1: [Ni(H2O)6] + HCOO⁻  →  [Ni(HCOO)(H2O)5] + H2O")
+print("  Step 1: [Ni(H2O)6] + HCOO-  ->  [Ni(HCOO)(H2O)5] + H2O")
 print("=" * 58)
 
 needed_step1 = ["Ni_H2O6", "HCOO", "Ni_HCOO_H2O5", "H2O"]
@@ -164,19 +164,19 @@ if all(k in results for k in needed_step1):
            - results["Ni_H2O6"].energy_eV     - results["HCOO"].energy_eV)
     dG1 = (results["Ni_HCOO_H2O5"].gibbs_eV  + results["H2O"].gibbs_eV
            - results["Ni_H2O6"].gibbs_eV      - results["HCOO"].gibbs_eV)
-    print(f"  ΔE = {dE1:+.4f} eV  ({dE1 * 23.06:+.2f} kcal/mol)")
-    print(f"  ΔG = {dG1:+.4f} eV  ({dG1 * 23.06:+.2f} kcal/mol)  at {T} K, {P/100:.0f} hPa")
+    print(f"  DeltaE = {dE1:+.4f} eV  ({dE1 * 23.06:+.2f} kcal/mol)")
+    print(f"  DeltaG = {dG1:+.4f} eV  ({dG1 * 23.06:+.2f} kcal/mol)  at {T} K, {P/100:.0f} hPa")
 else:
     missing = [k for k in needed_step1 if k not in results]
     print(f"  (Missing results for: {missing})")
 
 
-# ── Step 2: [Ni(HCOO)(H2O)5] + HCOO⁻ → [Ni(HCOO)2(H2O)4] + H2O ────────────
+# -- Step 2: [Ni(HCOO)(H2O)5] + HCOO- -> [Ni(HCOO)2(H2O)4] + H2O ------------
 #
 # Uses the lower-energy isomer (cis or trans) as the product.
 
 print("\n" + "=" * 58)
-print("  Step 2: [Ni(HCOO)(H2O)5] + HCOO⁻  →  [Ni(HCOO)2(H2O)4] + H2O")
+print("  Step 2: [Ni(HCOO)(H2O)5] + HCOO-  ->  [Ni(HCOO)2(H2O)4] + H2O")
 print("=" * 58)
 
 product_key = None
@@ -198,11 +198,11 @@ if product_key and all(k in results for k in needed_step2):
     dG2 = (results[product_key].gibbs_eV  + results["H2O"].gibbs_eV
            - results["Ni_HCOO_H2O5"].gibbs_eV  - results["HCOO"].gibbs_eV)
     print(f"  Product: {product_key}")
-    print(f"  ΔE = {dE2:+.4f} eV  ({dE2 * 23.06:+.2f} kcal/mol)")
-    print(f"  ΔG = {dG2:+.4f} eV  ({dG2 * 23.06:+.2f} kcal/mol)  at {T} K, {P/100:.0f} hPa")
+    print(f"  DeltaE = {dE2:+.4f} eV  ({dE2 * 23.06:+.2f} kcal/mol)")
+    print(f"  DeltaG = {dG2:+.4f} eV  ({dG2 * 23.06:+.2f} kcal/mol)  at {T} K, {P/100:.0f} hPa")
 else:
     missing = [k for k in needed_step2 if k not in results] + ([] if product_key else ["Ni_HCOO2"])
     print(f"  (Missing results for: {missing})")
 
 print("\nNote: these are gas-phase xTB energies.")
-print("For solution-phase ΔG, add solvation corrections (e.g. COSMO-RS or SMD).")
+print("For solution-phase DeltaG, add solvation corrections (e.g. COSMO-RS or SMD).")

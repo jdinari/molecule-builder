@@ -3,10 +3,10 @@ writer.py
 =========
 Convenience I/O helpers for writing enumerated complexes to disk.
 
-    write_poscar(mol, path)          – write one POSCAR
-    write_xyz(mol, path)             – write one XYZ
-    write_all(results, ...)          – write every (mol, row) pair + CSV summary
-    write_csv(rows, csv_file)        – write just the CSV
+    write_poscar(mol, path)          - write one POSCAR
+    write_xyz(mol, path)             - write one XYZ
+    write_all(results, ...)          - write every (mol, row) pair + CSV summary
+    write_csv(rows, csv_file)        - write just the CSV
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from molbuilder.output.poscar_writer import poscar_to_string
 from molbuilder.output.xyz_writer import xyz_to_string
 
 
-# ── single-file writers ───────────────────────────────────────────────────────
+# -- single-file writers -------------------------------------------------------
 
 def write_poscar(mol: Molecule, path: Path) -> None:
     """Write *mol* to a VASP POSCAR file at *path*, creating directories."""
@@ -45,7 +45,7 @@ def write_json(data: dict, path: Path) -> None:
     path.write_text(json.dumps(data, indent=2))
 
 
-# ── CSV helper ────────────────────────────────────────────────────────────────
+# -- CSV helper ----------------------------------------------------------------
 
 def write_csv(rows: List[Dict[str, Any]], csv_file: Path) -> None:
     """Write a list of metadata dicts to *csv_file*."""
@@ -59,7 +59,7 @@ def write_csv(rows: List[Dict[str, Any]], csv_file: Path) -> None:
         writer.writerows(rows)
 
 
-# ── bulk writer ───────────────────────────────────────────────────────────────
+# -- bulk writer ---------------------------------------------------------------
 
 def write_all(
     results: Iterable[Tuple[Molecule, Dict[str, Any]]],
@@ -67,7 +67,7 @@ def write_all(
     csv_file: Optional[str | Path] = "complexes_summary.csv",
     fmt: str = "poscar",
     verbose: bool = False,
-    # ── optional relaxation ───────────────────────────────────────────────────
+    # -- optional relaxation ---------------------------------------------------
     relax: bool = False,
     relax_backend: str = "xtb",
     relax_model: Optional[str] = None,
@@ -96,11 +96,11 @@ def write_all(
     relax_backend  : "xtb" (default) or "mace".
     relax_model    : Override the default model (None = backend default).
                      xTB default: "GFN2-xTB".  MACE default: "mh-1".
-    relax_fmax     : Force convergence threshold in eV/Å.  Default 0.05.
+    relax_fmax     : Force convergence threshold in eV/Angstrom.  Default 0.05.
     relax_steps    : Maximum optimiser steps.  Default 300.
     relax_device   : "cpu" or "cuda" (MACE only).
     relax_suffix   : Suffix appended to relaxed POSCAR filenames.
-                     Default "_relaxed"  →  ``Ni_HCOO4_relaxed.POSCAR``.
+                     Default "_relaxed"  ->  ``Ni_HCOO4_relaxed.POSCAR``.
     write_relax_json : If True, write a companion JSON alongside each relaxed
                        POSCAR containing energy, convergence, and backend
                        provenance.  Default True.
@@ -118,7 +118,7 @@ def write_all(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Import relaxation module lazily — only needed when relax=True
+    # Import relaxation module lazily -- only needed when relax=True
     _relax_fn = None
     if relax:
         try:
@@ -135,7 +135,7 @@ def write_all(
     rows: List[Dict[str, Any]] = []
 
     for mol, row in results:
-        # ── write idealised POSCAR ──────────────────────────────────────────
+        # -- write idealised POSCAR ------------------------------------------
         fname = Path(row["filename"])
         path  = fname if fname.is_absolute() else output_dir / fname
         if fmt == "xyz":
@@ -145,7 +145,7 @@ def write_all(
             write_poscar(mol, path)
         row["filename"] = str(path)
 
-        # ── initialise relaxation columns ──────────────────────────────────
+        # -- initialise relaxation columns ----------------------------------
         row["relax_energy_eV"] = None
         row["relax_converged"] = None
         row["relax_steps"]     = None
@@ -153,7 +153,7 @@ def write_all(
         row["relax_model"]     = None
         row["relax_filename"]  = None
 
-        # ── optional relaxation ────────────────────────────────────────────
+        # -- optional relaxation --------------------------------------------
         if relax and _relax_fn is not None:
             try:
                 res = _relax_fn(
@@ -187,8 +187,8 @@ def write_all(
                 )
 
             if verbose and row["relax_energy_eV"] is not None:
-                conv = "✓" if row["relax_converged"] else "!"
-                print(f"  {conv} relaxed → {row['relax_filename']}  "
+                conv = "OK" if row["relax_converged"] else "!"
+                print(f"  {conv} relaxed -> {row['relax_filename']}  "
                       f"E={row['relax_energy_eV']:.4f} eV"
                       + ("" if row["relax_converged"] else "  (NOT converged)"))
 
@@ -216,11 +216,11 @@ def write_all(
 
         rows.append(row)
         if verbose and not relax:
-            print(f"  → {path}")
+            print(f"  -> {path}")
 
     if csv_file is not None and rows:
         write_csv(rows, Path(csv_file))
         if verbose:
-            print(f"\n  CSV summary → {csv_file}  ({len(rows)} entries)")
+            print(f"\n  CSV summary -> {csv_file}  ({len(rows)} entries)")
 
     return rows

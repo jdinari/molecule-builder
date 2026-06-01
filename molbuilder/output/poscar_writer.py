@@ -4,9 +4,9 @@ poscar_writer.py
 Write a Molecule to VASP POSCAR format.
 
 Layout:
- - Atoms centered in a cubic vacuum box (15 Å padding each side → 30 Å cell)
- - Species sorted by atomic number (heaviest first: metal → donor → H)
- - Cartesian coordinates in Ångströms
+ - Atoms centered in a cubic vacuum box (15 Angstrom padding each side -> 30 Angstrom cell)
+ - Species sorted by atomic number (heaviest first: metal -> donor -> H)
+ - Cartesian coordinates in Angstromngstroms
  - Formal charge and spin multiplicity in the comment line
 """
 
@@ -33,7 +33,7 @@ ATOMIC_NUMBERS = {
     "Rn": 86,
 }
 
-PADDING = 15.0   # Å of vacuum on each side of the molecule
+PADDING = 15.0   # Angstrom of vacuum on each side of the molecule
 
 
 def poscar_to_string(mol: Molecule, padding: float = PADDING) -> str:
@@ -46,7 +46,7 @@ def poscar_to_string(mol: Molecule, padding: float = PADDING) -> str:
     atoms = mol.atoms
     symbols = [a.symbol for a in atoms]
 
-    # ── sort species heaviest-first ────────────────────────────────────────
+    # -- sort species heaviest-first ----------------------------------------
     unique_elements = list(OrderedDict.fromkeys(symbols))  # preserve first-seen order
     unique_elements.sort(key=lambda s: -ATOMIC_NUMBERS.get(s, 0))
 
@@ -60,12 +60,12 @@ def poscar_to_string(mol: Molecule, padding: float = PADDING) -> str:
     sorted_symbols = [a.symbol for a in sorted_atoms]
     sorted_positions = np.array([a.position for a in sorted_atoms])
 
-    # ── centre in box ─────────────────────────────────────────────────────
+    # -- centre in box -----------------------------------------------------
     if len(sorted_positions) > 0:
         centroid = sorted_positions.mean(axis=0)
         sorted_positions = sorted_positions - centroid
 
-    # ── cell: tight box + padding ──────────────────────────────────────────
+    # -- cell: tight box + padding ------------------------------------------
     if len(sorted_positions) > 1:
         span = sorted_positions.max(axis=0) - sorted_positions.min(axis=0)
     else:
@@ -80,17 +80,17 @@ def poscar_to_string(mol: Molecule, padding: float = PADDING) -> str:
     else:
         sorted_positions = sorted_positions + cell / 2
 
-    # ── count species for header line ─────────────────────────────────────
+    # -- count species for header line -------------------------------------
     species_order = list(OrderedDict.fromkeys(sorted_symbols))
     counts = [sorted_symbols.count(el) for el in species_order]
 
-    # ── comment line ──────────────────────────────────────────────────────
+    # -- comment line ------------------------------------------------------
     formula = mol.formula or _make_formula(sorted_symbols)
     charge_str = f"charge={mol.charge:+d}" if mol.charge != 0 else "charge=0"
     spin_str   = f"mult={mol.spin_multiplicity}"
     comment = f"{formula}  {charge_str}  {spin_str}  (molbuilder)"
 
-    # ── assemble POSCAR ───────────────────────────────────────────────────
+    # -- assemble POSCAR ---------------------------------------------------
     lines = []
     lines.append(comment)
     lines.append("1.0")                                        # scale factor

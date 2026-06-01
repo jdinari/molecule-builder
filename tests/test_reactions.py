@@ -1,14 +1,14 @@
 """
 tests/test_reactions.py
 =======================
-Tests for molbuilder.reactions — isodesmic-only ReactionNetwork.
+Tests for molbuilder.reactions -- isodesmic-only ReactionNetwork.
 
 Key correctness properties:
     1. Only isodesmic reactions (same-charge ligand swaps)
     2. Bond-broken structures excluded automatically
     3. Same oxidation state enforced
-    4. All reference molecules are neutral (H₂O, HCOOH)
-    5. Forward ΔE and reverse ΔE sum to ~0
+    4. All reference molecules are neutral (H2O, HCOOH)
+    5. Forward DeltaE and reverse DeltaE sum to ~0
     6. Charge balance holds on every edge
 """
 
@@ -23,7 +23,7 @@ from molbuilder.reactions import (
 )
 
 
-# ── shared fixtures ───────────────────────────────────────────────────────────
+# -- shared fixtures -----------------------------------------------------------
 
 @pytest.fixture(scope="module")
 def small_rows(tmp_path_factory):
@@ -53,7 +53,7 @@ def net_with_broken(small_rows):
     return ReactionNetwork(tagged, bond_filter=True, verbose=False)
 
 
-# ── helper functions ──────────────────────────────────────────────────────────
+# -- helper functions ----------------------------------------------------------
 
 class TestHelpers:
     def test_parse_combo(self):
@@ -98,7 +98,7 @@ class TestHelpers:
         assert _make_free_molecule("UNKNOWN") is None
 
 
-# ── ReactionNetwork construction ──────────────────────────────────────────────
+# -- ReactionNetwork construction ----------------------------------------------
 
 class TestConstruction:
     def test_builds(self, net):
@@ -139,7 +139,7 @@ class TestConstruction:
         assert "Associations" in s
 
 
-# ── Bond filter ───────────────────────────────────────────────────────────────
+# -- Bond filter ---------------------------------------------------------------
 
 class TestBondFilter:
     def test_broken_excluded(self, net_with_broken, small_rows):
@@ -165,7 +165,7 @@ class TestBondFilter:
                 f"BROKEN node found in graph: {d.get('formula')}"
 
 
-# ── Isodesmic constraint ──────────────────────────────────────────────────────
+# -- Isodesmic constraint ------------------------------------------------------
 
 class TestIsodesmicConstraint:
     def test_all_substitutions_isodesmic(self, net):
@@ -177,10 +177,10 @@ class TestIsodesmicConstraint:
                 q_in  = _LIGAND_CHARGES.get(inc,  0)
                 q_out = _LIGAND_CHARGES.get(out, 0)
                 assert q_in == q_out, \
-                    f"Non-isodesmic edge: {inc}(q={q_in}) → {out}(q={q_out})"
+                    f"Non-isodesmic edge: {inc}(q={q_in}) -> {out}(q={q_out})"
 
     def test_no_h3o_reference(self, net):
-        """H₃O⁺ should never appear — we are neutral-only."""
+        """H3O+ should never appear -- we are neutral-only."""
         assert "ref:H3O" not in net.graph
 
     def test_all_reference_nodes_neutral(self, net):
@@ -201,7 +201,7 @@ class TestIsodesmicConstraint:
                 f"Charge imbalance ({total_q}) for {net.reaction_str(src, dst)}"
 
 
-# ── Substitution properties ───────────────────────────────────────────────────
+# -- Substitution properties ---------------------------------------------------
 
 class TestSubstitutions:
     def test_has_substitutions(self, net):
@@ -215,7 +215,7 @@ class TestSubstitutions:
         fwd = {(s, d) for s, d, _ in net.substitutions}
         for s, d in list(fwd):
             assert (d, s) in fwd, \
-                f"Missing reverse: {net.node_label(d)} → {net.node_label(s)}"
+                f"Missing reverse: {net.node_label(d)} -> {net.node_label(s)}"
 
     def test_same_ox_state(self, net):
         for src, dst, _ in net.substitutions:
@@ -249,7 +249,7 @@ class TestSubstitutions:
                         f"Reference {rid} is not neutral"
 
 
-# ── Association / Dissociation ────────────────────────────────────────────────
+# -- Association / Dissociation ------------------------------------------------
 
 class TestAssociations:
     def test_has_associations(self, net):
@@ -273,7 +273,7 @@ class TestAssociations:
             assert e["stoich"][dst] == +1
 
     def test_displaced_is_h2o(self, net):
-        """Displaced ligands in associations must be H₂O (isodesmic)."""
+        """Displaced ligands in associations must be H2O (isodesmic)."""
         for _, _, e in net.associations:
             assert e.get("displaced_ligand") == "H2O"
 
@@ -284,7 +284,7 @@ class TestAssociations:
         assert assoc_pairs == diss_pairs
 
 
-# ── Energetics ────────────────────────────────────────────────────────────────
+# -- Energetics ----------------------------------------------------------------
 
 class TestEnergetics:
     @pytest.fixture(scope="class")
@@ -307,17 +307,17 @@ class TestEnergetics:
         assert n_with_de > 0
 
     def test_substitution_de_range(self, net_e):
-        """Isodesmic ΔE for monomer subs should be in ±5 eV."""
+        """Isodesmic DeltaE for monomer subs should be in +/-5 eV."""
         for src, dst, e in net_e.substitutions:
             dE = e.get("delta_e")
             if dE is None:
                 continue
             if net_e.graph.nodes[src].get("structure") == "monomer":
                 assert -5.0 < dE < 5.0, \
-                    f"Unreasonable ΔE={dE:.3f}: {net_e.reaction_str(src, dst)}"
+                    f"Unreasonable DeltaE={dE:.3f}: {net_e.reaction_str(src, dst)}"
 
     def test_forward_reverse_symmetric(self, net_e):
-        """ΔE_fwd + ΔE_rev should equal 0 (isodesmic property)."""
+        """DeltaE_fwd + DeltaE_rev should equal 0 (isodesmic property)."""
         checked = 0
         for src, dst, e in net_e.substitutions:
             dE_fwd = e.get("delta_e")
@@ -327,7 +327,7 @@ class TestEnergetics:
             if dE_rev is None:
                 continue
             assert abs(dE_fwd + dE_rev) < 0.05, \
-                f"ΔE symmetry broken: fwd={dE_fwd:.4f}  rev={dE_rev:.4f}"
+                f"DeltaE symmetry broken: fwd={dE_fwd:.4f}  rev={dE_rev:.4f}"
             checked += 1
         assert checked > 0, "No fwd/rev pairs found"
 
@@ -357,7 +357,7 @@ class TestEnergetics:
         assert net_e.delta_e(nodes[0], nodes[0]) is None
 
 
-# ── Labels and display ────────────────────────────────────────────────────────
+# -- Labels and display --------------------------------------------------------
 
 class TestLabels:
     def test_node_label_reference(self, net):
@@ -371,12 +371,12 @@ class TestLabels:
     def test_reaction_str_substitution(self, net):
         s, d, _ = net.substitutions[0]
         rs = net.reaction_str(s, d)
-        assert "→" in rs
+        assert "->" in rs
 
     def test_reaction_str_association(self, net):
         s, d, _ = net.associations[0]
         rs = net.reaction_str(s, d)
-        assert "2×" in rs
+        assert "2x" in rs
 
     def test_reaction_str_no_edge(self, net):
         nodes = list(net.graph.nodes)
@@ -384,7 +384,7 @@ class TestLabels:
             assert "No such edge" in net.reaction_str(nodes[0], nodes[1])
 
 
-# ── plot() ────────────────────────────────────────────────────────────────────
+# -- plot() --------------------------------------------------------------------
 
 class TestPlot:
     def test_plot_returns_figure(self, net):
@@ -402,7 +402,7 @@ class TestPlot:
         mpl.pyplot.close(fig)
 
 
-# ── to_dataframe() ────────────────────────────────────────────────────────────
+# -- to_dataframe() ------------------------------------------------------------
 
 class TestDataframe:
     def test_returns_df(self, net):
@@ -418,7 +418,7 @@ class TestDataframe:
             assert col in df.columns
 
 
-# ── include_geometry_changes ──────────────────────────────────────────────────
+# -- include_geometry_changes --------------------------------------------------
 
 class TestGeometryChanges:
     def test_more_substitutions_when_enabled(self, small_rows):
@@ -427,7 +427,7 @@ class TestGeometryChanges:
         assert len(net_yes.substitutions) >= len(net_no.substitutions)
 
 
-# ── Coordination / Decoordination ─────────────────────────────────────────────
+# -- Coordination / Decoordination ---------------------------------------------
 
 @pytest.fixture(scope="module")
 def rows_multi_cn(tmp_path_factory):
@@ -490,7 +490,7 @@ class TestCoordination:
                 f"Charge imbalance ({total_q}) for {net_cn.reaction_str(src, dst)}"
 
     def test_same_non_h2o_ligands(self, net_cn):
-        """Coordination edges connect complexes with the same non-H₂O ligands."""
+        """Coordination edges connect complexes with the same non-H2O ligands."""
         for src, dst, e in net_cn.coordinations:
             ns, nd = net_cn.graph.nodes[src], net_cn.graph.nodes[dst]
             if ns.get("node_type") != "complex" or nd.get("node_type") != "complex":
@@ -499,7 +499,7 @@ class TestCoordination:
             la = {k: v for k, v in _parse_combo(ns["ligands"]).items() if k != "H2O"}
             lb = {k: v for k, v in _parse_combo(nd["ligands"]).items() if k != "H2O"}
             assert la == lb, \
-                f"Non-H₂O ligands differ: {ns['ligands']} vs {nd['ligands']}"
+                f"Non-H2O ligands differ: {ns['ligands']} vs {nd['ligands']}"
 
     def test_bidirectional(self, net_cn):
         """Every coordination has a paired decoordination."""
@@ -514,10 +514,10 @@ class TestCoordination:
             if e.get("geom_from") != e.get("geom_to")
         ]
         assert len(geom_changes) > 0, \
-            "Expected coordination edges crossing geometries (e.g. tet→sqpy)"
+            "Expected coordination edges crossing geometries (e.g. tet->sqpy)"
 
     def test_de_symmetric(self, net_cn):
-        """ΔE(coord) + ΔE(decoord) should equal 0 when both are computed."""
+        """DeltaE(coord) + DeltaE(decoord) should equal 0 when both are computed."""
         from molbuilder.relaxation import compute_energy
         computed = 0
         for nid, data in net_cn.graph.nodes(data=True):
@@ -539,7 +539,7 @@ class TestCoordination:
             if dE_rev is None:
                 continue
             assert abs(dE_fwd + dE_rev) < 0.05, \
-                f"ΔE symmetry broken: fwd={dE_fwd:.4f}  rev={dE_rev:.4f}"
+                f"DeltaE symmetry broken: fwd={dE_fwd:.4f}  rev={dE_rev:.4f}"
             break
 
     def test_summary_shows_cn_count(self, net_cn):
@@ -549,13 +549,13 @@ class TestCoordination:
     def test_reaction_str_coordination(self, net_cn):
         src, dst, _ = net_cn.coordinations[0]
         rs = net_cn.reaction_str(src, dst)
-        assert "H₂O" in rs
+        assert "H2O" in rs
         assert "CN" in rs
 
     def test_reaction_str_decoordination(self, net_cn):
         src, dst, _ = net_cn.decoordinations[0]
         rs = net_cn.reaction_str(src, dst)
-        assert "H₂O" in rs
+        assert "H2O" in rs
         assert "CN" in rs
 
     def test_no_cn_change_without_multi_cn_inventory(self, net):

@@ -1,5 +1,5 @@
 """
-Tutorial 02 — Isomer enumeration and batch POSCAR generation
+Tutorial 02 -- Isomer enumeration and batch POSCAR generation
 =============================================================
 
 This tutorial covers:
@@ -18,48 +18,48 @@ OUT = Path("poscar_tutorial02")
 OUT.mkdir(exist_ok=True)
 
 
-# ── 1. Single-isomer complex ──────────────────────────────────────────────────
+# -- 1. Single-isomer complex --------------------------------------------------
 
 mol = build("Ni", ox=2, ligands=["H2O"] * 6)
-print(f"[Ni(H2O)6]²⁺  →  {type(mol).__name__}")  # single Molecule
+print(f"[Ni(H2O)6]2+  ->  {type(mol).__name__}")  # single Molecule
 
 poscar(mol, OUT / "Ni_H2O6.POSCAR")
 
 
-# ── 2. Two isomers: fac and mer ───────────────────────────────────────────────
+# -- 2. Two isomers: fac and mer -----------------------------------------------
 
 mols = build("Fe", ox=3, ligands=["Cl", "Cl", "Cl", "H2O", "H2O", "H2O"])
-print(f"\n[FeCl3(H2O)3]  →  {len(mols)} isomers")
+print(f"\n[FeCl3(H2O)3]  ->  {len(mols)} isomers")
 
 for mol in mols:
     filename = OUT / f"FeCl3_H2O3_{mol.label}.POSCAR"
     poscar(mol, filename)
-    print(f"  {mol.label:6s}  →  {filename.name}")
+    print(f"  {mol.label:6s}  ->  {filename.name}")
 
 
-# ── 3. cis / trans: square planar Pd(II) ─────────────────────────────────────
+# -- 3. cis / trans: square planar Pd(II) -------------------------------------
 
 mols = build("Pd", ox=2, ligands=["Cl", "Cl", "NH3", "NH3"], geometry="sqp")
 mols = mols if isinstance(mols, list) else [mols]
-print(f"\n[PdCl2(NH3)2] sqp  →  {len(mols)} isomers")
+print(f"\n[PdCl2(NH3)2] sqp  ->  {len(mols)} isomers")
 
 for mol in mols:
     filename = OUT / f"PdCl2_NH3_2_{mol.label}.POSCAR"
     poscar(mol, filename)
-    print(f"  {mol.label:6s}  →  {filename.name}")
+    print(f"  {mol.label:6s}  ->  {filename.name}")
 
 
-# ── 4. Bidentate chelating formate ───────────────────────────────────────────
+# -- 4. Bidentate chelating formate -------------------------------------------
 
 mol = build("Ni", ox=2, ligands=["HCOO:bi", "HCOO:bi", "H2O", "H2O"], geometry="sqp")
 mols = mol if isinstance(mol, list) else [mol]
 for mol in mols:
     poscar(mol, OUT / f"Ni_HCOObi2_H2O2_{mol.label}.POSCAR")
 
-print(f"\n[Ni(HCOO:bi)2(H2O)2] sqp  →  {len(mols)} isomers written")
+print(f"\n[Ni(HCOO:bi)2(H2O)2] sqp  ->  {len(mols)} isomers written")
 
 
-# ── 5. Looping over a ligand pool ─────────────────────────────────────────────
+# -- 5. Looping over a ligand pool ---------------------------------------------
 
 print("\nMixed-ligand Ni(II) octahedral sweep:")
 
@@ -76,6 +76,6 @@ for ligs in ligand_sets:
     for mol in mols:
         fname = OUT / f"Ni_{label_str}_{mol.label}.POSCAR"
         poscar(mol, fname)
-    print(f"  {ligs}  →  {len(mols)} isomer(s)")
+    print(f"  {ligs}  ->  {len(mols)} isomer(s)")
 
 print(f"\nAll POSCARs written to {OUT}/")
