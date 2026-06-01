@@ -7,12 +7,15 @@ Demonstrates:
     • Broken-structure flagging
     • Network plot and CSV export
 
-Install: pip install tblite ase matplotlib pandas
+Install:
+    pip install git+https://github.com/jdinari/molecule-builder.git
+    pip install tblite ase matplotlib pandas
+
+Run from the repository root:
+    python examples/reaction_network.py
 """
 
 from pathlib import Path
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from molbuilder import enumerate_complexes, MULTI_BRIDGE_CASES
 from molbuilder.reactions import ReactionNetwork, ReactionType
@@ -80,4 +83,4 @@ try:
     plt.close(fig)
     print(f"Plot → {OUT}/network.png")
 except ImportError:
-    pass
+    print("(plot skipped — pip install matplotlib)")

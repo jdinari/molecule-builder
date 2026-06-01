@@ -27,19 +27,18 @@ This is the canonical isodesmic substitution:
 The reaction network captures this automatically for every Ni complex in
 your inventory that contains OH⁻.
 
-Install requirements
---------------------
-    pip install tblite ase          # xTB thermochemistry
-    pip install matplotlib          # plot
-    pip install pandas              # CSV export
+Install:
+    pip install git+https://github.com/jdinari/molecule-builder.git
+    pip install tblite ase matplotlib pandas
+
+Run:
+    python tutorials/07_reaction_network.py
 """
 
 import warnings
 warnings.filterwarnings("ignore")
 
 from pathlib import Path
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from molbuilder import enumerate_complexes, MULTI_BRIDGE_CASES
 from molbuilder.reactions import ReactionNetwork, ReactionType
@@ -74,7 +73,7 @@ for i, (mol, row) in enumerate(rows):
     r["bond_status"] = "BROKEN" if i % 8 == 0 else "OK"
     rows_tagged.append((mol, r))
 
-# ── 3. Build the reaction network ──────────────────────────────────────────────
+# ── 3. Build the reaction network ─────────────────────────────────────────────
 print("\n=== Step 2: Build reaction network ===")
 net = ReactionNetwork(
     rows_tagged,
@@ -88,7 +87,7 @@ print(net.summary())
 print("\n=== Step 3: The formic acid route (HCOOH + [Ni-OH] → [Ni-HCOO] + H₂O) ===")
 hcooh_edges = [
     (s, d, e) for s, d, e in net.substitutions
-    if e.get("hcoo_source") and           # HCOOH is the incoming reference
+    if e.get("hcoo_source") and
        net.graph.nodes[s].get("structure") == "monomer"
 ]
 # Deduplicate by (src_ligands, dst_ligands, geometry)
@@ -124,7 +123,6 @@ if has_energies:
     print("\n=== Step 5: Screen reactions (ΔG ≤ 1.0 eV) ===")
     print()
 
-    # All reaction types, sorted by ΔG
     hits = net.screen(max_dE=1.0, use_gibbs=True, require_energy=True)
     print(f"  {len(hits)} reaction(s) with ΔG ≤ 1.0 eV:")
     for src, dst, e, dG in hits[:10]:
@@ -133,7 +131,6 @@ if has_energies:
     if len(hits) > 10:
         print(f"    … and {len(hits)-10} more")
 
-    # Formic acid substitutions only
     print()
     print("  Formic acid substitutions (HCOOH + [Ni-OH] → [Ni-HCOO] + H₂O):")
     hcooh_hits = [
@@ -162,14 +159,13 @@ csv_path = OUT / "reaction_network.csv"
 df.to_csv(csv_path, index=False)
 print(f"  Reaction network CSV → {csv_path}  ({len(df)} edges)")
 
-# Show the DataFrame structure
-import sys
-if "pandas" in sys.modules or True:
-    cols = ["src_ligands","dst_ligands","reaction_type",
-            "incoming","outgoing","delta_e_eV","delta_g_eV"]
+cols = ["src_ligands", "dst_ligands", "reaction_type",
+        "incoming", "outgoing", "delta_e_eV", "delta_g_eV"]
+available_cols = [c for c in cols if c in df.columns]
+if available_cols:
     print()
     print("  CSV columns (first 5 rows):")
-    print(df[cols].head().to_string(index=False))
+    print(df[available_cols].head().to_string(index=False))
 
 # Plot (requires matplotlib)
 try:
@@ -188,10 +184,10 @@ except ImportError:
 
 print()
 print("=== Summary ===")
-print(f"  Total structures in network : {sum(1 for _,d in net.graph.nodes(data=True) if d['node_type']=='complex')}")
+print(f"  Total structures in network : {sum(1 for _, d in net.graph.nodes(data=True) if d['node_type'] == 'complex')}")
 print(f"  Excluded (BROKEN)           : {len(net.broken_structures)}")
-print(f"  Substitution reactions      : {len(net.substitutions)//2}")
-print(f"  Coordination/Decoord        : {len(net.coordinations)//2}")
+print(f"  Substitution reactions      : {len(net.substitutions) // 2}")
+print(f"  Coordination/Decoord        : {len(net.coordinations) // 2}")
 print(f"  Associations                : {len(net.associations)}")
 print()
 print("Key takeaways:")

@@ -45,6 +45,8 @@ molbuilder --metal Ni --ox 2 --ligands H2O H2O H2O H2O H2O H2O --out Ni_H2O6.POS
 `build()` returns a **list** when more than one symmetry-distinct arrangement exists, or a single `Molecule` otherwise:
 
 ```python
+from molbuilder.api import build, poscar
+
 # Single isomer → Molecule
 mol  = build("Ni", ox=2, ligands=["H2O"] * 6)
 
@@ -74,7 +76,7 @@ for mol in mols:
 ### Monomers
 
 ```python
-from molbuilder.api import build, poscar, xyz, info
+from molbuilder.api import build, poscar, info
 
 # Octahedral Ni(II) hexaaqua
 mol = build("Ni", ox=2, ligands=["H2O"] * 6)
@@ -128,8 +130,11 @@ mol = trimer("Ni", ox=2, bridge="mu-HCOO",
 
 ### Geometry relaxation
 
+Requires `pip install tblite ase`.
+
 ```python
-from molbuilder.relaxation import relax, compute_energy, thermochemistry, check_bonds_intact
+from molbuilder.api import build
+from molbuilder.relaxation import relax, thermochemistry, check_bonds_intact
 
 mol = build("Ni", ox=2, ligands=["H2O"] * 6)
 
@@ -150,13 +155,45 @@ print(f"G(350K) = {thermo.gibbs_at(T=350):.4f} eV")  # no re-run needed
 
 ### ΔE and ΔG for reactions
 
+Requires `pip install tblite ase`.
+
 ```python
+import numpy as np
+from molbuilder.api import build
+from molbuilder.core.molecule import Molecule, Atom
 from molbuilder.relaxation import thermochemistry
 
+# Build the Ni complexes
+Ni_H2O6      = build("Ni", ox=2, ligands=["H2O"] * 6)
+Ni_HCOO_H2O5 = build("Ni", ox=2, ligands=["HCOO"] + ["H2O"] * 5)
+if isinstance(Ni_HCOO_H2O5, list):
+    Ni_HCOO_H2O5 = Ni_HCOO_H2O5[0]
+
+# Build free-molecule references from known geometry parameters
+def make_h2o():
+    ah = np.radians(104.5 / 2); oh = 0.958
+    return Molecule(
+        atoms=[Atom("O", np.zeros(3)),
+               Atom("H", np.array([ oh*np.sin(ah), oh*np.cos(ah), 0.])),
+               Atom("H", np.array([-oh*np.sin(ah), oh*np.cos(ah), 0.]))],
+        formula="H2O", charge=0, spin_multiplicity=1, metal_symbol="", metal_ox=0,
+    )
+
+def make_formate():
+    ah = np.radians(126.0 / 2); co = 1.25; ch = 1.09
+    return Molecule(
+        atoms=[Atom("C", np.zeros(3)),
+               Atom("O", np.array([ co*np.sin(ah), co*np.cos(ah), 0.])),
+               Atom("O", np.array([-co*np.sin(ah), co*np.cos(ah), 0.])),
+               Atom("H", np.array([0., -ch, 0.]))],
+        formula="HCOO", charge=-1, spin_multiplicity=1, metal_symbol="", metal_ox=0,
+    )
+
+# Compute thermochemistry for all four species
 r_hexaaqua = thermochemistry(Ni_H2O6,       backend="xtb", T=298.15)
-r_formate   = thermochemistry(HCOO_molecule, backend="xtb", T=298.15)
+r_formate   = thermochemistry(make_formate(), backend="xtb", T=298.15)
 r_product   = thermochemistry(Ni_HCOO_H2O5, backend="xtb", T=298.15)
-r_water     = thermochemistry(H2O_molecule,  backend="xtb", T=298.15)
+r_water     = thermochemistry(make_h2o(),    backend="xtb", T=298.15)
 
 dE = r_product.energy_eV + r_water.energy_eV \
    - r_hexaaqua.energy_eV - r_formate.energy_eV
@@ -164,9 +201,14 @@ dE = r_product.energy_eV + r_water.energy_eV \
 dG = r_product.gibbs_eV  + r_water.gibbs_eV  \
    - r_hexaaqua.gibbs_eV - r_formate.gibbs_eV
 
-# Re-evaluate at any T/P without re-running:
+# Re-evaluate at any T without re-running:
 dG_350 = (r_product.gibbs_at(350) + r_water.gibbs_at(350)
         - r_hexaaqua.gibbs_at(350) - r_formate.gibbs_at(350))
+
+print(f"[Ni(H2O)6] + HCOO⁻  →  [Ni(HCOO)(H2O)5] + H2O")
+print(f"  ΔE = {dE:+.4f} eV")
+print(f"  ΔG(298K) = {dG:+.4f} eV")
+print(f"  ΔG(350K) = {dG_350:+.4f} eV")
 ```
 
 ### Batch generation
@@ -174,10 +216,19 @@ dG_350 = (r_product.gibbs_at(350) + r_water.gibbs_at(350)
 The `generate_ni_complexes.py` script generates all neutral Ni(II)/Ni(III) complexes across CN 3–7 using formate, formic acid, water, hydroxide, and bidentate formate as ligands:
 
 ```bash
+pip install git+https://github.com/jdinari/molecule-builder.git
 python generate_ni_complexes.py
 ```
 
-Set `COMPUTE_ENERGY = True` at the top to also relax every structure with xTB or MACE and produce an Excel workbook with colour-coded bond status.
+Open `generate_ni_complexes.py` and flip these flags at the top of the file to enable each stage:
+
+```python
+COMPUTE_ENERGY    = True   # relax every structure and compute ΔG(T, P)
+COMPUTE_REACTIONS = True   # build isodesmic reaction network and screen by ΔG
+```
+
+With `COMPUTE_ENERGY = True`, every structure is relaxed with xTB or MACE and
+an Excel workbook with colour-coded bond status is written to `ni_energetics.xlsx`.
 
 ---
 
@@ -256,7 +307,7 @@ MACE uses `head="omol"` automatically — the molecular head trained on OMOL/OC2
 
 ## Tutorials
 
-Six step-by-step tutorials in `tutorials/`:
+Seven step-by-step tutorials in `tutorials/`:
 
 | # | Topic |
 |---|-------|
@@ -266,9 +317,18 @@ Six step-by-step tutorials in `tutorials/`:
 | 04 | MACE relaxation on a cluster (local model file, GPU, SLURM) |
 | 05 | xTB thermochemistry — ΔE and ΔG for ligand substitution |
 | 06 | Batch enumeration with `enumerate_complexes()` and `run_energetics()` |
+| 07 | Isodesmic reaction network, ΔG screening, broken-structure filtering |
+
+Each tutorial can be run directly from the repository root after installing the package:
 
 ```bash
 python tutorials/01_first_complex.py
+python tutorials/02_isomers_and_bidentate.py
+python tutorials/03_dimers_and_trimers.py
+python tutorials/04_mace_relaxation.py            # requires: pip install mace-torch ase
+python tutorials/05_thermochemistry.py            # requires: pip install tblite ase
+python tutorials/06_enumeration_and_energetics.py # requires: pip install tblite ase openpyxl
+python tutorials/07_reaction_network.py           # requires: pip install tblite ase matplotlib pandas
 ```
 
 Short copy-paste examples are in `examples/`.

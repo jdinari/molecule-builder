@@ -1,13 +1,39 @@
 # Examples
 
 Short, self-contained scripts — one idea per file.
-Copy-paste or run directly from the repository root.
+Run directly from the repository root after installing the package.
+
+## Installation
+
+```bash
+pip install git+https://github.com/jdinari/molecule-builder.git
+
+# For xTB relaxation and thermochemistry (xtb_* examples)
+pip install tblite ase
+
+# For Excel output (batch_enumerate.py)
+pip install openpyxl
+
+# For reaction network plot (reaction_network.py)
+pip install matplotlib pandas
+```
+
+## Running examples
 
 ```bash
 python examples/build_single.py
 python examples/isomers.py
-# etc.
+python examples/cisplatin.py
+python examples/dimer_paddlewheel.py
+python examples/heteroleptic_dimer.py
+python examples/trimer_triangular.py
+python examples/xtb_relax_and_energy.py    # requires: pip install tblite ase
+python examples/xtb_delta_g.py             # requires: pip install tblite ase
+python examples/batch_enumerate.py         # requires: pip install tblite ase openpyxl
+python examples/reaction_network.py        # requires: pip install tblite ase matplotlib pandas
 ```
+
+## File descriptions
 
 | File | What it shows |
 |------|--------------|
@@ -20,18 +46,4 @@ python examples/isomers.py
 | `xtb_relax_and_energy.py` | Relax cis/trans isomers with xTB, compare ΔE |
 | `xtb_delta_g.py` | Full ΔG for a ligand substitution reaction |
 | `batch_enumerate.py` | Enumerate a set of complexes and run batch xTB energetics |
-
-## Dependencies
-
-```bash
-pip install git+https://github.com/jdinari/molecule-builder.git
-
-# For xTB (tutorials 05, 06 and examples xtb_*)
-pip install tblite ase
-
-# For MACE (tutorial 04)
-pip install mace-torch ase
-
-# For Excel output
-pip install openpyxl
-```
+| `reaction_network.py` | Build and screen an isodesmic reaction network |
