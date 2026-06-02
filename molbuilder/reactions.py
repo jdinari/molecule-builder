@@ -1104,3 +1104,80 @@ class ReactionNetwork:
                 f"{self.graph.number_of_nodes()} nodes, "
                 f"{self.graph.number_of_edges()} edges, "
                 f"{len(self.broken_structures)} excluded)")
+
+
+# -- Energy attachment helpers (used by generate_ni_complexes.py) -------------
+
+def attach_energies_from_rows(net, rows: list,
+                               backend: str, compute_thermo: bool,
+                               T: float, P: float,
+                               fmax: float, steps: int,
+                               xtb_model=None, mace_model=None,
+                               mace_device: str = "cpu") -> None:
+    """
+    Attach pre-computed energies from rows into reaction network graph nodes,
+    then compute reference molecule energies (H2O, HCOOH, H2) at the same
+    level and update all edge DeltaE / DeltaG values.
+    """
+    import warnings
+
+    for node_id, node_data in net.graph.nodes(data=True):
+        if node_data.get("node_type") != "complex":
+            continue
+        row  = node_data.get("row", {})
+        e_ev = row.get("relax_energy_eV")
+        g_ev = row.get("relax_gibbs_eV")
+        if e_ev is not None:
+            net.graph.nodes[node_id]["energy_eV"] = e_ev
+        if g_ev is not None:
+            net.graph.nodes[node_id]["gibbs_eV"]  = g_ev
+
+    print("  Computing reference molecule energies (H2O, HCOOH, H2) ...")
+    b = backend.lower()
+    if compute_thermo:
+        if b == "xtb+mace":
+            from molbuilder.relaxation import xtb_relax_mace_singlepoint as _fn
+            kwargs = dict(xtb_model=xtb_model, mace_model=mace_model,
+                          mace_device=mace_device, compute_thermo=True,
+                          T=T, P=P, fmax=fmax, steps=steps)
+        else:
+            from molbuilder.relaxation import thermochemistry as _fn
+            kwargs = dict(backend=b, T=T, P=P, fmax=fmax, steps=steps)
+    else:
+        from molbuilder.relaxation import compute_energy as _fn
+        kwargs = dict(backend=b.replace("+mace", ""))
+
+    for node_id, node_data in net.graph.nodes(data=True):
+        if node_data.get("node_type") != "reference":
+            continue
+        try:
+            res = _fn(node_data["mol"], **kwargs)
+            update = {"energy_eV": float(res.energy_eV)}
+            if compute_thermo:
+                update["gibbs_eV"] = float(res.gibbs_eV)
+                update["_therm"]   = res
+            net.graph.nodes[node_id].update(update)
+            g_str = f"  G={res.gibbs_eV:.3f}" if compute_thermo else ""
+            print(f"    {node_data['formula']:8s}  E={res.energy_eV:.3f}{g_str} eV")
+        except Exception as exc:
+            warnings.warn(f"Ref energy failed for {node_data.get('formula','?')}: {exc}")
+
+    net._update_edge_energies()
+
+
+def run_network_energies(net, backend: str, compute_thermo: bool,
+                          T: float, P: float,
+                          fmax: float, steps: int) -> None:
+    """
+    Compute energies for all network nodes via net.compute_energies().
+    Falls back from xtb+mace to pure xTB (the hybrid requires Stage 1).
+    """
+    b = backend.lower()
+    if b == "xtb+mace":
+        b = "xtb"
+        print("  Note: xtb+mace hybrid requires COMPUTE_ENERGY = True.")
+        print("        Using pure xTB for reaction network energies.")
+    net.compute_energies(
+        backend=b, compute_thermo=compute_thermo,
+        T=T, P=P, fmax=fmax, steps=steps, verbose=True,
+    )

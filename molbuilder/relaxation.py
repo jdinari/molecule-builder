@@ -803,6 +803,42 @@ def thermochemistry(
 
 # -- bond-integrity checker ----------------------------------------------------
 
+def _atom_to_ligand_map(mol: Molecule) -> dict:
+    """
+    Return {atom_index: ligand_name} for every donor atom in mol.
+
+    Donor atoms are the non-metal atoms within 2.5 Angstrom of the metal
+    that belong to DONOR_ELEMENTS (O, N, S, P, C).  They are sorted by atom
+    index, which matches the order ligands were appended during build(), and
+    therefore aligns 1:1 with mol.ligand_names.
+
+    Returns an empty dict if mol has no metal or no ligand_names.
+    """
+    if not mol.metal_symbol or not mol.metal_indices:
+        return {}
+    ligand_names = getattr(mol, "ligand_names", None)
+    if not ligand_names:
+        return {}
+
+    DONOR_ELEMENTS = {"O", "N", "S", "P", "C"}
+    donors = []
+    for mi in mol.metal_indices:
+        m_pos = mol.atoms[mi].position
+        for i, a in enumerate(mol.atoms):
+            if i == mi or a.symbol not in DONOR_ELEMENTS:
+                continue
+            d = float(np.linalg.norm(a.position - m_pos))
+            if d < 2.5:
+                donors.append((i, a.symbol))
+
+    donors.sort(key=lambda x: x[0])  # sort by atom index = build order
+
+    if len(donors) != len(ligand_names):
+        return {}  # mapping is ambiguous -- fall back to atom-only labels
+
+    return {atom_idx: name for (atom_idx, _), name in zip(donors, ligand_names)}
+
+
 def check_bonds_intact(
     mol_before:       Molecule,
     mol_after:        Molecule,
@@ -844,8 +880,43 @@ def check_bonds_intact(
         return {"intact": True, "broken_bonds": [], "max_elongation": 0.0}
 
     metal_indices = mol_before.metal_indices
+    # Build atom -> ligand name map from the pre-relaxation structure
+    atom_to_lig = _atom_to_ligand_map(mol_before)
     broken = []
     max_elong = 0.0
+
+    # --- Ligand integrity: track proton transfers between ligands ---
+    # Expected H count per ligand type (H atoms covalently bonded to the donor).
+    # A change means a proton moved to or from another ligand during relaxation
+    # (e.g. HCOO -> COO + H, or OH + H -> H2O). This is chemistry, not an error.
+    _EXPECTED_H = {
+        "H2O": 2, "OH": 1, "HCOO": 1, "HCOOH": 1,
+        "NH3": 3, "NH2": 2, "NH": 1,
+        "H2": 2, "Cl": 0, "F": 0, "Br": 0, "I": 0,
+        "CO": 0, "CN": 0, "NO": 0,
+    }
+    h_indices_all = [i for i, a in enumerate(mol_before.atoms) if a.symbol == "H"]
+    ligand_changes = []
+    for donor_idx, lig_name in atom_to_lig.items():
+        expected_h = _EXPECTED_H.get(lig_name, -1)
+        if expected_h < 0:
+            continue
+        donor_pos_after = mol_after.atoms[donor_idx].position
+        # Count H atoms still within O-H / N-H bond distance after relaxation
+        actual_h = sum(
+            1 for hi in h_indices_all
+            if np.linalg.norm(mol_after.atoms[hi].position - donor_pos_after) < 1.3
+        )
+        if actual_h != expected_h:
+            diff = actual_h - expected_h
+            ligand_changes.append({
+                "donor_idx":   donor_idx,
+                "ligand_name": lig_name,
+                "expected_H":  expected_h,
+                "actual_H":    actual_h,
+                "note": (f"{lig_name} -{-diff}H" if diff < 0
+                         else f"{lig_name} +{diff}H"),
+            })
 
     for mi in metal_indices:
         m_pos_b = mol_before.atoms[mi].position
@@ -859,21 +930,28 @@ def check_bonds_intact(
             if d_b < cutoff_A:   # only check atoms that were originally bonded
                 elong = d_a / d_b
                 max_elong = max(max_elong, elong)
-                if elong > threshold_factor:
+                # Collect both stretched (>1.20x) and broken (>1.35x) bonds.
+                # Only report donor atoms (those in atom_to_lig) so H atoms
+                # drifting near the metal are not misreported as broken bonds.
+                # Falls back to all atoms if the ligand map could not be built.
+                is_donor = (j in atom_to_lig) if atom_to_lig else True
+                if elong > 1.20 and is_donor:
                     broken.append({
                         "metal_idx":    mi,
                         "ligand_idx":   j,
                         "metal_sym":    metal,
                         "ligand_sym":   ab.symbol,
+                        "ligand_name":  atom_to_lig.get(j, ab.symbol),
                         "d_before_A":   round(d_b, 4),
                         "d_after_A":    round(d_a, 4),
                         "elongation":   round(elong, 3),
                     })
 
     return {
-        "intact":         len(broken) == 0,
-        "broken_bonds":   broken,
-        "max_elongation": round(max_elong, 3),
+        "intact":          len(broken) == 0 and len(ligand_changes) == 0,
+        "broken_bonds":    broken,
+        "max_elongation":  round(max_elong, 3),
+        "ligand_changes":  ligand_changes,
     }
 
 

@@ -253,6 +253,8 @@ def run_energetics(
                     row["bond_n_broken"]       = len(bc.get("broken_bonds", []))
                     row["bond_status"]         = _bond_status(
                         bc.get("max_elongation") or 1.0)
+                    row["bond_detail"]         = bc.get("broken_bonds", [])
+                    row["ligand_changes"]      = bc.get("ligand_changes", [])
                     if output_dir:
                         rp = _write_relaxed(xtb.mol, row, output_dir, "_relaxed_xtb")
                         row["relax_filename"] = str(rp)
@@ -299,6 +301,8 @@ def run_energetics(
                 row["bond_max_elongation"] = bc["max_elongation"]
                 row["bond_n_broken"]       = len(bc["broken_bonds"])
                 row["bond_status"]         = _bond_status(bc["max_elongation"])
+                row["bond_detail"]         = bc["broken_bonds"]
+                row["ligand_changes"]      = bc.get("ligand_changes", [])
 
                 if output_dir:
                     rp = _write_relaxed(res.mol, row, output_dir, "_relaxed_xtb")
@@ -335,6 +339,8 @@ def run_energetics(
                 row["bond_max_elongation"] = bc["max_elongation"]
                 row["bond_n_broken"]       = len(bc["broken_bonds"])
                 row["bond_status"]         = _bond_status(bc["max_elongation"])
+                row["bond_detail"]         = bc["broken_bonds"]
+                row["ligand_changes"]      = bc.get("ligand_changes", [])
 
                 if output_dir:
                     rp = _write_relaxed(res.mol, row, output_dir,
@@ -346,26 +352,49 @@ def run_energetics(
                 bk  = row.get("relax_backend", backend)
                 bs  = row.get("bond_status", BondStatus.OK)
                 cv  = row.get("relax_converged", True)
-                b_str = f"  ! {bs}" if bs != BondStatus.OK else ""
                 c_str = "  ! not converged" if cv is False else ""
 
                 if bk == "xtb+mace":
-                    # Show xTB and MACE energies side by side so the user
-                    # can see both levels. G is the hybrid absolute Gibbs
-                    # energy (not a reaction energy -- DeltaG comes later).
                     e_xtb  = row.get("relax_energy_eV")
                     e_mace = row.get("relax_mace_energy_eV")
                     g_hyb  = row.get("relax_gibbs_eV")
                     e_xtb_str  = f"E_xTB={e_xtb:.3f}" if e_xtb  is not None else ""
                     e_mace_str = f"  E_MACE={e_mace:.3f}" if e_mace is not None else ""
                     g_str      = f"  G_hybrid={g_hyb:.3f}" if g_hyb  is not None else ""
-                    print(f"{e_xtb_str}{e_mace_str}{g_str} eV{b_str}{c_str}")
+                    print(f"{e_xtb_str}{e_mace_str}{g_str} eV{c_str}")
                 else:
                     e = row.get("relax_energy_eV") or row.get("relax_mace_energy_eV")
                     g = row.get("relax_gibbs_eV")
                     e_str = f"E={e:.3f}" if e is not None else ""
                     g_str = f"  G={g:.3f}" if g is not None else ""
-                    print(f"{e_str}{g_str} eV{b_str}{c_str}")
+                    print(f"{e_str}{g_str} eV{c_str}")
+
+                # Always print bond detail when any bond is flagged
+                if bs != BondStatus.OK:
+                    detail = row.get("bond_detail", [])
+                    # Classify into broken vs stretched
+                    broken    = [b for b in detail if b["elongation"] > _BROKEN_THRESHOLD]
+                    stretched = [b for b in detail if _STRETCHED_THRESHOLD < b["elongation"] <= _BROKEN_THRESHOLD]
+
+                    def _bond_str(b):
+                        # Use ligand name (e.g. "HCOO", "H2O") when available,
+                        # fall back to element symbol if the map failed
+                        lig = b.get("ligand_name") or b["ligand_sym"]
+                        return (f"{b['metal_sym']}-{lig} "
+                                f"{b['d_before_A']:.2f}->{b['d_after_A']:.2f}A "
+                                f"({b['elongation']:.2f}x)")
+
+                    if broken:
+                        print(f"    BROKEN:    {', '.join(_bond_str(b) for b in broken)}")
+                    if stretched:
+                        print(f"    STRETCHED: {', '.join(_bond_str(b) for b in stretched)}")
+
+                lc = row.get("ligand_changes", [])
+                if lc:
+                    # Report proton transfers neutrally -- this is chemistry,
+                    # not necessarily a problem. e.g. HCOO-H -> COO + H->OH.
+                    notes = ", ".join(c["note"] for c in lc)
+                    print(f"    proton transfer: {notes}")
 
         except Exception as exc:
             if verbose:
@@ -382,13 +411,17 @@ def run_energetics(
     n_done      = sum(1 for r in updated if r.get("relax_energy_eV") is not None
                       or r.get("relax_mace_energy_eV") is not None)
 
+    n_lig_chg = sum(1 for r in updated if r.get("ligand_changes"))
+
     if verbose and n_done:
         print(f"\n  Completed    : {n_done} / {len(rows)}")
         print(f"  Converged    : {n_conv} / {n_done}")
         if n_broken:
-            print(f"  ! BROKEN     : {n_broken}  (bond dissociated during relaxation)")
+            print(f"  ! BROKEN     : {n_broken}  (M-L bond dissociated during relaxation)")
         if n_stretched:
-            print(f"  ~ STRETCHED  : {n_stretched}  (bond elongated > 1.20x)")
+            print(f"  ~ STRETCHED  : {n_stretched}  (M-L bond elongated > 1.20x)")
+        if n_lig_chg:
+            print(f"  ~ proton transfer: {n_lig_chg}  (H moved between ligands during relaxation)")
 
     if csv_file and updated:
         write_csv(updated, Path(csv_file))
@@ -476,3 +509,112 @@ def write_broken_report(
         print("   2. Re-run with constrain_bonds=True to force the topology.")
         print("   3. Discard -- if xTB says it's unstable, DFT likely will too.")
         print("=" * 60)
+
+
+# -- Post-relaxation structure filters ----------------------------------------
+
+def best_energy(row: dict):
+    """Return the best available energy for ranking: MACE > xTB > None."""
+    mace_e = row.get("relax_mace_energy_eV")
+    xtb_e  = row.get("relax_energy_eV")
+    if mace_e is not None:
+        return mace_e
+    if xtb_e is not None:
+        return xtb_e
+    return None
+
+
+def _rmsd_kabsch(pos1, pos2) -> float:
+    """Kabsch-algorithm RMSD between two Nx3 position arrays (numpy)."""
+    import numpy as np
+    c1 = pos1 - pos1.mean(0)
+    c2 = pos2 - pos2.mean(0)
+    U, S, Vt = np.linalg.svd(c2.T @ c1)
+    R = Vt.T @ np.diag([1.0, 1.0, np.linalg.det(Vt.T @ U.T)]) @ U.T
+    return float(np.sqrt((((R @ c2.T).T - c1) ** 2).sum() / len(c1)))
+
+
+def filter_duplicate_structures(rows: list, mol_lookup: dict,
+                                 energy_tol_eV: float = 0.005,
+                                 rmsd_tol_A: float = 0.30) -> list:
+    """
+    Remove structures that converged to the same geometry after relaxation.
+
+    Two relaxed structures are duplicates when their energies agree within
+    energy_tol_eV AND their Kabsch RMSD is below rmsd_tol_A.  The higher-
+    energy member of each duplicate pair is dropped.  Structures without an
+    energy are always kept.
+    """
+    import numpy as np
+    from collections import defaultdict
+
+    by_formula = defaultdict(list)
+    for i, r in enumerate(rows):
+        mol = mol_lookup.get(r.get("filename"))
+        if mol is None or r.get("relax_energy_eV") is None:
+            by_formula["__no_energy__"].append((i, r, None))
+            continue
+        relax_mol = mol_lookup.get(r.get("relax_filename")) if r.get("relax_filename") else None
+        by_formula[mol.formula].append((i, r, relax_mol or mol))
+
+    duplicates = set()
+    for formula, members in by_formula.items():
+        if formula == "__no_energy__" or len(members) < 2:
+            continue
+        for a in range(len(members)):
+            if members[a][0] in duplicates:
+                continue
+            for b in range(a + 1, len(members)):
+                if members[b][0] in duplicates:
+                    continue
+                i, ri, mol_i = members[a]
+                j, rj, mol_j = members[b]
+                ei = ri.get("relax_energy_eV", 0.0)
+                ej = rj.get("relax_energy_eV", 0.0)
+                if abs(ei - ej) > energy_tol_eV:
+                    continue
+                pi = np.array([a_.position for a_ in mol_i.atoms])
+                pj = np.array([a_.position for a_ in mol_j.atoms])
+                if len(pi) != len(pj):
+                    continue
+                if _rmsd_kabsch(pi, pj) < rmsd_tol_A:
+                    duplicates.add(j if ei <= ej else i)
+
+    if not duplicates:
+        return rows
+    filtered = [r for i, r in enumerate(rows) if i not in duplicates]
+    print(f"  Duplicate filter: removed {len(duplicates)} structure(s) "
+          f"that converged to the same geometry.")
+    return filtered
+
+
+def filter_best_isomers(rows: list) -> list:
+    """
+    Keep only the lowest-energy isomer per unique (metal, ox, cn, geometry,
+    ligand_combo, structure) group.  Ranks by MACE energy when available,
+    falls back to xTB.  Groups with no energy are kept in full.
+    """
+    from collections import defaultdict
+
+    groups = defaultdict(list)
+    for i, r in enumerate(rows):
+        key = (r.get("metal"), r.get("ox"), r.get("cn"),
+               r.get("geometry"), r.get("ligand_combo"), r.get("structure"))
+        groups[key].append((i, r))
+
+    keep = set()
+    for key, members in groups.items():
+        scored = [(i, best_energy(r)) for i, r in members
+                  if best_energy(r) is not None]
+        if scored:
+            keep.add(min(scored, key=lambda x: x[1])[0])
+        else:
+            for i, _ in members:
+                keep.add(i)
+
+    filtered = [r for i, r in enumerate(rows) if i in keep]
+    n_dropped = len(rows) - len(filtered)
+    if n_dropped:
+        print(f"  Best-isomer filter: kept {len(filtered)} / {len(rows)} "
+              f"({n_dropped} higher-energy isomers removed)")
+    return filtered

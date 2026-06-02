@@ -224,3 +224,59 @@ def write_all(
             print(f"\n  CSV summary -> {csv_file}  ({len(rows)} entries)")
 
     return rows
+
+
+# -- CSV round-trip ------------------------------------------------------------
+
+def load_csv(csv_file: Path) -> List[Dict[str, Any]]:
+    """
+    Load rows from a previously written CSV, coercing columns back to their
+    correct Python types (float, int, bool).  All other columns stay as str.
+    """
+    import csv as _csv
+
+    FLOAT_COLS = {
+        "relax_energy_eV", "relax_mace_energy_eV", "relax_gibbs_eV",
+        "relax_zpe_eV", "relax_enthalpy_eV", "relax_entropy_eV_K",
+        "relax_T_K", "relax_P_Pa", "bond_max_elongation",
+        "relax_dE_mace_xtb_eV", "relax_mace_gibbs_eV",
+    }
+    INT_COLS  = {"ox", "cn", "spin_multiplicity", "relax_steps", "bond_n_broken"}
+    BOOL_COLS = {"relax_converged"}
+
+    rows = []
+    with open(csv_file, newline="") as f:
+        for row in _csv.DictReader(f):
+            for col in FLOAT_COLS:
+                if col in row and row[col] not in ("", "None", None):
+                    try:    row[col] = float(row[col])
+                    except ValueError: row[col] = None
+                else:
+                    row[col] = None
+            for col in INT_COLS:
+                if col in row and row[col] not in ("", "None", None):
+                    try:    row[col] = int(float(row[col]))
+                    except ValueError: pass
+            for col in BOOL_COLS:
+                if col in row:
+                    row[col] = row[col] in ("True", "true", "1")
+            rows.append(row)
+    return rows
+
+
+# -- Molecule cache (pickle) ---------------------------------------------------
+
+def save_mols_cache(mols_in_order: list, rows: list, cache_file: Path) -> None:
+    """Save {filename -> Molecule} mapping to a pickle file."""
+    import pickle
+    mol_lookup = {r["filename"]: m for m, r in zip(mols_in_order, rows)}
+    with open(cache_file, "wb") as f:
+        pickle.dump(mol_lookup, f)
+    print(f"  Molecule cache -> {cache_file}")
+
+
+def load_mols_cache(cache_file: Path) -> dict:
+    """Load {filename -> Molecule} from a pickle file."""
+    import pickle
+    with open(cache_file, "rb") as f:
+        return pickle.load(f)
