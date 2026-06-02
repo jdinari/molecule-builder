@@ -641,6 +641,20 @@ class ReactionNetwork:
 
                 stoich_diss = {v: -k for v, k in stoich_assoc.items()}
 
+                # Atom-balance check: reactant and product atom counts must match.
+                # Imbalanced reactions mean the displaced-ligand arithmetic went
+                # wrong (e.g. bridge stripping failed). Skip silently.
+                def _atom_count(nid):
+                    mol = self.graph.nodes[nid].get("mol")
+                    return len(mol.atoms) if mol else 0
+
+                r_atoms = sum(abs(c) * _atom_count(n)
+                              for n, c in stoich_assoc.items() if c < 0)
+                p_atoms = sum(c * _atom_count(n)
+                              for n, c in stoich_assoc.items() if c > 0)
+                if r_atoms != p_atoms:
+                    continue
+
                 disp_str = "+".join(
                     f"{cnt}x{lig}" if cnt > 1 else lig
                     for lig, cnt in sorted(displaced_counter.items())
