@@ -247,17 +247,28 @@ class ReactionNetwork:
         # -- bond filter -------------------------------------------------------
         self.broken_structures: List[Tuple[Molecule, Dict[str, Any]]] = []
         good: List[Tuple[Molecule, Dict[str, Any]]] = []
+        n_not_conv = 0
         for mol, row in mols_and_rows:
+            excluded = False
             if bond_filter and row.get("bond_status") == "BROKEN":
                 self.broken_structures.append((mol, row))
-            else:
+                excluded = True
+            if bond_filter and row.get("relax_converged") is False:
+                if not excluded:
+                    self.broken_structures.append((mol, row))
+                n_not_conv += 1
+                excluded = True
+            if not excluded:
                 good.append((mol, row))
 
         if self.broken_structures and verbose:
-            n = len(self.broken_structures)
-            formulas = ", ".join(m.formula for m, _ in self.broken_structures[:4])
-            print(f"  !  {n} structure(s) excluded (bond_status=BROKEN): {formulas}"
-                  + ("..." if n > 4 else ""))
+            n_broken = len(self.broken_structures) - n_not_conv
+            if n_broken:
+                formulas = ", ".join(m.formula for m, _ in self.broken_structures[:4])
+                print(f"  !  {n_broken} structure(s) excluded (bond_status=BROKEN): {formulas}"
+                      + ("..." if n_broken > 4 else ""))
+            if n_not_conv:
+                print(f"  !  {n_not_conv} structure(s) excluded (relaxation not converged)")
             print("     Access via network.broken_structures for manual review.")
 
         # -- neutral filter ----------------------------------------------------
@@ -638,6 +649,15 @@ class ReactionNetwork:
                                 _therm=None, node_type="reference",
                             )
                     stoich_assoc[rid] = stoich_assoc.get(rid, 0) + cnt
+
+                # Drop any stoich entries whose reference node was never
+                # added to the graph (e.g. "HCOObi" has no free-molecule form).
+                # If a displaced ligand has no node we cannot check balance, so
+                # skip the whole reaction.
+                missing = [nid for nid in stoich_assoc
+                           if nid not in self.graph]
+                if missing:
+                    continue
 
                 stoich_diss = {v: -k for v, k in stoich_assoc.items()}
 
@@ -1139,6 +1159,9 @@ def attach_energies_from_rows(net, rows: list,
         if node_data.get("node_type") != "complex":
             continue
         row  = node_data.get("row", {})
+        # Skip non-converged structures -- their energy is unreliable
+        if row.get("relax_converged") is False:
+            continue
         e_ev = row.get("relax_energy_eV")
         g_ev = row.get("relax_gibbs_eV")
         if e_ev is not None:
@@ -1195,3 +1218,48 @@ def run_network_energies(net, backend: str, compute_thermo: bool,
         backend=b, compute_thermo=compute_thermo,
         T=T, P=P, fmax=fmax, steps=steps, verbose=True,
     )
+
+
+def run_and_export_network(net, rows: list,
+                            output_csv, output_plot,
+                            reaction_max_dg: float,
+                            reaction_types,
+                            compute_thermo: bool,
+                            output_dir) -> None:
+    """
+    Screen the network, print results, export CSV + plot, and report broken
+    structures.  Called after energies have been attached to the graph.
+    """
+    from molbuilder.energetics import write_broken_report
+
+    e_or_g = "DeltaG" if compute_thermo else "DeltaE"
+
+    hits = net.screen(max_dE=reaction_max_dg, use_gibbs=compute_thermo,
+                      reaction_types=reaction_types, require_energy=True)
+    print(f"\n{len(hits)} reaction(s) with {e_or_g} <= {reaction_max_dg} eV:")
+    for src, dst, e, val in hits[:20]:
+        print(f"  {val:+.3f} eV  {net.reaction_str(src, dst)}")
+    if len(hits) > 20:
+        print(f"  ... and {len(hits) - 20} more")
+
+    df = net.to_dataframe()
+    df.to_csv(output_csv, index=False)
+    n_g = int(df["delta_g_eV"].notna().sum()) if "delta_g_eV" in df.columns else 0
+    n_e = int(df["delta_e_eV"].notna().sum()) if "delta_e_eV" in df.columns else 0
+    print(f"\nReaction network -> {output_csv}")
+    print(f"  {len(df)} reactions  |  {n_e} with DeltaE  |  {n_g} with DeltaG")
+    if n_g == 0 and compute_thermo:
+        print("  WARNING: no DeltaG -- check for 'Ref energy failed' above.")
+
+    try:
+        import matplotlib.pyplot as plt
+        fig = net.plot(title=f"Ni reaction network ({e_or_g})",
+                       edge_label="delta_g" if compute_thermo else "delta_e")
+        fig.savefig(output_plot, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Network plot     -> {output_plot}")
+    except Exception as exc:
+        print(f"(plot skipped: {exc})")
+
+    if net.broken_structures:
+        write_broken_report(net.broken_structures, output_dir, verbose=True)

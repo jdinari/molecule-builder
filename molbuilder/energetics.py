@@ -411,11 +411,22 @@ def run_energetics(
     n_done      = sum(1 for r in updated if r.get("relax_energy_eV") is not None
                       or r.get("relax_mace_energy_eV") is not None)
 
-    n_lig_chg = sum(1 for r in updated if r.get("ligand_changes"))
+    n_lig_chg     = sum(1 for r in updated if r.get("ligand_changes"))
+    n_not_conv    = sum(1 for r in updated if r.get("relax_converged") is False)
+
+    # Mark non-converged structures so downstream code can exclude them.
+    # The energy IS stored (it is the best available estimate) but
+    # relax_converged=False is a clear signal that it should not be trusted
+    # for quantitative DeltaG comparisons.
+    for r in updated:
+        if r.get("relax_converged") is False:
+            r["bond_status"] = r.get("bond_status") or BondStatus.STRETCHED
 
     if verbose and n_done:
         print(f"\n  Completed    : {n_done} / {len(rows)}")
         print(f"  Converged    : {n_conv} / {n_done}")
+        if n_not_conv:
+            print(f"  ! not converged: {n_not_conv}  (energy unreliable -- excluded from DeltaG)")
         if n_broken:
             print(f"  ! BROKEN     : {n_broken}  (M-L bond dissociated during relaxation)")
         if n_stretched:

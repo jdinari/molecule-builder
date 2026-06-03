@@ -1,6 +1,6 @@
 """molbuilder - transition metal complex builder -> POSCAR / XYZ (VASP)"""
 
-__version__ = "3.0.0"
+__version__ = "0.1.0"
 
 from molbuilder.api import (
     build, build_isomers, dimer, trimer, poscar, xyz, info,

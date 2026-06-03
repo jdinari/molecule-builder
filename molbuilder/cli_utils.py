@@ -9,24 +9,19 @@ import datetime
 
 __all__ = ["print_header", "print_settings", "print_enumeration_summary"]
 
-# Option A -- compact box letters
-_LOGO = """
-  ╔╦╗╔═╗╦  ╔╗ ╦ ╦╦╦  ╔╦╗╔═╗╦═╗
-  ║║║║ ║║  ╠╩╗║ ║║║   ║║║╣ ╠╦╝   v{version}
-  ╩ ╩╚═╝╩═╝╚═╝╚═╝╩╩═╝═╩╝╚═╝╩╚═   {tagline}
-  {line}
-"""
-
-_VERSION = "3.0.0"
+_VERSION = "0.1.0"
 _TAGLINE = "Ni complex generator"
 
 
 def print_header(version: str = _VERSION, tagline: str = _TAGLINE) -> None:
-    """Print the molbuilder ASCII banner to stdout."""
+    """Print the molbuilder banner to stdout using plain ASCII only."""
     now = datetime.datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
-    line = "-" * 42
-    logo = _LOGO.format(version=version, tagline=tagline, line=line)
-    print(logo.rstrip())
+    bar = "-" * 52
+    print()
+    print(f"  {bar}")
+    print(f"  |  mol builder   v{version:<8s}  {tagline:<22s}|")
+    print(f"  |  xTB / MACE    Ni(II/III)  isodesmic DeltaG      |")
+    print(f"  {bar}")
     print(f"  Started : {now}")
     print()
 

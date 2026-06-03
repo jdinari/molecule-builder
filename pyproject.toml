@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "molbuilder"
-version = "3.0.0"
-description = "Transition metal complex builder — generates VASP POSCAR structures"
+version = "0.1.0"
+description = "Transition metal complex builder -- generates VASP POSCAR structures"
 requires-python = ">=3.9"
 dependencies = [
     "numpy>=1.21",

@@ -22,7 +22,8 @@ from molbuilder import enumerate_complexes, write_all, MULTI_BRIDGE_CASES
 from molbuilder.energetics import run_energetics, write_broken_report
 from molbuilder.energetics import filter_duplicate_structures, filter_best_isomers
 from molbuilder.output.writer import load_csv, save_mols_cache, load_mols_cache, write_csv
-from molbuilder.reactions import attach_energies_from_rows, run_network_energies
+from molbuilder.reactions import (attach_energies_from_rows, run_network_energies,
+                                   run_and_export_network)
 from molbuilder.cli_utils import print_header, print_settings, print_enumeration_summary
 
 
@@ -159,9 +160,8 @@ if __name__ == "__main__":
                          for r in rows if r.get("filename") in mol_lookup]
 
         if not mols_and_rows:
-            print(f"ERROR: no molecule objects found.  Run Stage 0 first (cache: {MOLS_CACHE}).")
+            print(f"ERROR: no molecule objects found. Run Stage 0 first (cache: {MOLS_CACHE}).")
         else:
-            print(f"Building reaction network from {len(mols_and_rows)} structures ...")
             net = ReactionNetwork(mols_and_rows, bond_filter=True,
                                   include_geometry_changes=True, verbose=True)
             print(net.summary())
@@ -169,12 +169,9 @@ if __name__ == "__main__":
             has_energies = any(r.get("relax_energy_eV") is not None for r in rows)
             if has_energies:
                 attach_energies_from_rows(
-                    net, rows,
-                    backend=ENERGY_BACKEND, compute_thermo=COMPUTE_THERMO,
-                    T=TEMPERATURE_K, P=PRESSURE_PA,
-                    fmax=RELAX_FMAX, steps=RELAX_STEPS,
-                    xtb_model=XTB_MODEL, mace_model=MACE_MODEL,
-                    mace_device=MACE_DEVICE,
+                    net, rows, backend=ENERGY_BACKEND, compute_thermo=COMPUTE_THERMO,
+                    T=TEMPERATURE_K, P=PRESSURE_PA, fmax=RELAX_FMAX, steps=RELAX_STEPS,
+                    xtb_model=XTB_MODEL, mace_model=MACE_MODEL, mace_device=MACE_DEVICE,
                 )
             else:
                 run_network_energies(net, backend=ENERGY_BACKEND,
@@ -182,33 +179,9 @@ if __name__ == "__main__":
                                      T=TEMPERATURE_K, P=PRESSURE_PA,
                                      fmax=RELAX_FMAX, steps=RELAX_STEPS)
 
-            e_or_g = "DeltaG" if COMPUTE_THERMO else "DeltaE"
-            hits = net.screen(max_dE=REACTION_MAX_DG, use_gibbs=COMPUTE_THERMO,
-                              reaction_types=REACTION_TYPES, require_energy=True)
-            print(f"\n{len(hits)} reaction(s) with {e_or_g} <= {REACTION_MAX_DG} eV:")
-            for src, dst, e, val in hits[:20]:
-                print(f"  {val:+.3f} eV  {net.reaction_str(src, dst)}")
-            if len(hits) > 20:
-                print(f"  ... and {len(hits) - 20} more")
-
-            df = net.to_dataframe()
-            df.to_csv(REACTIONS_CSV, index=False)
-            n_g = int(df["delta_g_eV"].notna().sum()) if "delta_g_eV" in df.columns else 0
-            n_e = int(df["delta_e_eV"].notna().sum()) if "delta_e_eV" in df.columns else 0
-            print(f"\nReaction network -> {REACTIONS_CSV}")
-            print(f"  {len(df)} reactions  |  {n_e} with DeltaE  |  {n_g} with DeltaG")
-            if n_g == 0 and COMPUTE_THERMO:
-                print("  WARNING: no DeltaG -- check for 'Ref energy failed' above.")
-
-            try:
-                import matplotlib.pyplot as plt
-                fig = net.plot(title=f"Ni reaction network ({e_or_g})",
-                               edge_label="delta_g" if COMPUTE_THERMO else "delta_e")
-                fig.savefig(REACTIONS_PLOT, dpi=150, bbox_inches="tight")
-                plt.close(fig)
-                print(f"Network plot     -> {REACTIONS_PLOT}")
-            except Exception as exc:
-                print(f"(plot skipped: {exc})")
-
-            if net.broken_structures:
-                write_broken_report(net.broken_structures, OUTPUT_DIR, verbose=True)
+            run_and_export_network(
+                net, rows,
+                output_csv=REACTIONS_CSV, output_plot=REACTIONS_PLOT,
+                reaction_max_dg=REACTION_MAX_DG, reaction_types=REACTION_TYPES,
+                compute_thermo=COMPUTE_THERMO, output_dir=OUTPUT_DIR,
+            )
